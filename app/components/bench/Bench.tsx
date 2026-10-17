@@ -4,9 +4,11 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useWorld } from "@/components/data/provider";
 import type { AgentEvent, Scenario } from "@/components/data/types";
-import { settleLabel } from "@/components/data/types";
-import { Diff } from "./Diff";
+import { deployTag, settleLabel } from "@/components/data/types";
+import type { AgentRun } from "@/components/data/adapter";
+import { Diff, UnifiedDiff } from "./Diff";
 import { Tiles } from "./Tiles";
+import { LastRun } from "./LastRun";
 import s from "./bench.module.css";
 
 type Run = "storm" | "fix" | null;
@@ -27,9 +29,35 @@ export function Bench() {
   const [status, setStatus] = useState<string>("Idle. The storm runs 30 seeded fault scenarios against the current settle.js inside the sandbox.");
   const [lines, setLines] = useState<Transcript[]>([]);
   const [outcome, setOutcome] = useState<"green" | "red" | null>(snap.suite ? (snap.suite.totals.ok === snap.suite.totals.count ? "green" : "red") : null);
+  const [lastRun, setLastRun] = useState<AgentRun | null>(null);
   const seq = useRef(0);
   const auto = useRef(false);
   const logRef = useRef<HTMLOListElement>(null);
+
+  // A cold visitor sees evidence, not empty states: the agent's last real run (kept in the
+  // sandbox) and the last suite the world ran on its deployed program.
+  useEffect(() => {
+    let alive = true;
+    world
+      .lastAgentRun()
+      .then((r) => {
+        if (!alive || !r) return;
+        setLastRun(r);
+        setModel((m) => m ?? (r.model ? `${r.model}${r.provider ? ` · ${r.provider}` : ""}` : null));
+      })
+      .catch(() => {});
+    world
+      .lastSuite()
+      .then((r) => {
+        if (!alive || !r || r.scenarios.length === 0) return;
+        setTiles((t) => (t.some(Boolean) ? t : r.scenarios.slice(0, 30)));
+        setOutcome((o) => o ?? (r.totals.ok === r.totals.count ? "green" : "red"));
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [world]);
 
   const push = useCallback((kind: Transcript["kind"], text: string) => {
     setLines((l) => [...l.slice(-80), { id: ++seq.current, kind, text }]);
@@ -147,6 +175,10 @@ export function Bench() {
   const current = snap.settle;
   const oldText = diff?.old ?? current.source;
   const newText = diff?.new ?? "";
+  // Before a run in this session, the columns show the last real run: its final diff and its record.
+  const showLast = !run && !diff && lines.length === 0 && lastRun !== null;
+  const lastUnified = showLast && lastRun?.final_diff?.unified ? lastRun.final_diff.unified : "";
+  const idleStatus = lastRun && !run && !diff && lines.length === 0 ? `Last run ${lastRun.ok ? "deployed" : "stopped"}: ${lastRun.reason || (lastRun.ok ? `every storm green` : "the suite stayed red")}` : status;
 
   return (
     <>
@@ -177,7 +209,7 @@ export function Bench() {
         <div className={`wrap ${s.benchGrid}`}>
           <div className={s.statusBar} role="status" aria-live="polite">
             <span className={s.statusLight} data-state={run ? "running" : outcome ?? "idle"} aria-hidden="true" />
-            <span className={s.statusText}>{status}</span>
+            <span className={s.statusText}>{idleStatus}</span>
             <span className={s.statusMeta}>
               {attempt ? <span>attempt {attempt.n}/{attempt.of}</span> : null}
               <span>model {model ?? (mode === "live" ? "waiting" : "—")}</span>
@@ -188,7 +220,11 @@ export function Bench() {
           </div>
 
           <div className={s.diffCol}>
-            <Diff oldText={oldText} newText={newText} oldLabel={diff ? versionBefore(diff.version, current.version) : settleLabel(current)} newLabel={diff?.version ?? ""} />
+            {lastUnified ? (
+              <UnifiedDiff unified={lastUnified} oldLabel={lastRun?.baseline?.version ? `deploy #${String(lastRun.baseline.version).replace(/\D/g, "")}` : "before"} newLabel={deployTag(lastRun?.deployed?.version ?? lastRun?.version)} />
+            ) : (
+              <Diff oldText={oldText} newText={newText} oldLabel={diff ? versionBefore(diff.version, current.version) : settleLabel(current)} newLabel={diff?.version ?? ""} />
+            )}
           </div>
 
           <div className={s.tilesCol}>
@@ -198,8 +234,9 @@ export function Bench() {
           </div>
 
           <div className={s.logCol}>
-            <h2 className={s.colTitle}>Transcript</h2>
-            <ol ref={logRef} className={s.log}>
+            <h2 className={s.colTitle}>{showLast ? "The agent's last run" : "Transcript"}</h2>
+            {showLast && lastRun ? <LastRun run={lastRun} mode={mode} /> : null}
+            <ol ref={logRef} className={s.log} hidden={showLast}>
               {lines.length === 0 ? <li className={s.logEmpty}>Press Fix it. The transcript shows what the agent read, decided and wrote.</li> : null}
               {lines.map((l) => (
                 <li key={l.id} className={s.logLine} data-kind={l.kind}>

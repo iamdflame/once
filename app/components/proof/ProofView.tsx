@@ -3,10 +3,12 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useWorld } from "@/components/data/provider";
-import type { Proof, ReceiptLine } from "@/components/data/types";
+import type { ReceiptLine } from "@/components/data/types";
+import type { ProofWithDrivers } from "@/components/data/adapter";
 import { deployTag, euro, settleLabel } from "@/components/data/types";
 import { Tiles } from "@/components/bench/Tiles";
 import { RunReceipt } from "./RunReceipt";
+import { Probe } from "./Probe";
 import s from "./proof.module.css";
 
 /** Every hold the world knows, with its latest outcome, from the board's receipt lines. */
@@ -16,10 +18,11 @@ function holdsFrom(lines: ReceiptLine[]) {
     if (!l.payment_intent) continue;
     const h = by.get(l.payment_intent) ?? { payment_intent: l.payment_intent, charger: l.charger ?? "", amount_cents: 5000, url: l.stripe_url, state: "uncaptured" };
     if (l.kind === "hold") h.amount_cents = l.amount_cents ?? h.amount_cents;
-    if (l.kind === "capture") {
-      h.state = "captured";
+    if (l.kind === "capture" || l.kind === "wrong") {
+      h.state = l.kind === "wrong" ? "wrong" : "captured";
       h.captured = l.amount_cents;
     }
+    if (l.kind === "stranded") h.state = "stranded";
     if (l.kind === "released" && h.state === "uncaptured") h.state = "released";
     if (l.kind === "refused" && h.state !== "captured") h.state = "refused";
     by.set(l.payment_intent, h);
@@ -29,7 +32,7 @@ function holdsFrom(lines: ReceiptLine[]) {
 
 export function ProofView() {
   const { world, snap, mode } = useWorld();
-  const [proof, setProof] = useState<Proof | null>(null);
+  const [proof, setProof] = useState<ProofWithDrivers | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
@@ -51,6 +54,8 @@ export function ProofView() {
   const settle = proof?.settle ?? snap.settle;
   const sandbox = proof?.sandbox ?? snap.sandbox;
   const holds = holdsFrom(snap.receipt);
+  const drivers = proof?.drivers ?? [];
+  const charges = proof?.charges ?? [];
 
   return (
     <>
@@ -63,12 +68,45 @@ export function ProofView() {
 
       <section className={`wrap ${s.grid}`}>
         <div className={`${s.card} ${s.holds}`}>
-          <h2 className={s.cardTitle}>Holds in the world</h2>
-          {holds.length === 0 ? (
+          <h2 className={s.cardTitle}>Holds, per driver</h2>
+          {drivers.length > 0 ? (
+            <ul className={s.holdList}>
+              {drivers.map((h) => (
+                <li key={h.payment_intent} className={s.driverLine} data-wrong={h.wrong_driver === true} data-stranded={h.stranded}>
+                  <span className={s.driverBadge}>{h.driver ? `DRV ${h.driver}` : "—"}</span>
+                  <span className={s.driverStory}>
+                    <b>{h.story}</b>
+                    <span className={s.driverMeta}>
+                      <span>{h.charger}</span>
+                      <a href={h.url} target="_blank" rel="noreferrer">
+                        {h.payment_intent}
+                      </a>
+                      <span>{euro(h.amount_cents)} authorised</span>
+                      {h.episode_id ? <span>{h.episode_id}</span> : null}
+                    </span>
+                  </span>
+                  <span className={s.status} data-status={h.stranded ? "stranded" : h.wrong_driver ? "wrong" : h.status === "captured" ? "succeeded" : h.status === "released" ? "canceled" : "requires_capture"}>
+                    {h.stranded ? "stranded" : h.wrong_driver ? "wrong driver" : h.status === "captured" ? `captured once · ${euro(h.captured_cents)}` : h.status}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {drivers.length > 0 && charges.length > 0 ? (
+            <ul className={s.chargeList} aria-label="Capture attempts, attributed">
+              {charges.map((c) => (
+                <li key={c.id} data-status={c.status} data-wrong={c.wrong_driver === true}>
+                  <span>{c.story}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {drivers.length === 0 && holds.length === 0 ? (
             <p className={s.empty}>
               No holds yet. <Link href="/">Plug in and pay</Link> on the board; the hold appears here at once, the capture when the session ends.
             </p>
-          ) : (
+          ) : null}
+          {drivers.length === 0 && holds.length > 0 ? (
             <ul className={s.holdList}>
               {holds.map((h) => (
                 <li key={h.payment_intent} className={s.hold} data-state={h.state}>
@@ -77,14 +115,16 @@ export function ProofView() {
                   </a>
                   <span className={s.holdCharger}>{h.charger}</span>
                   <span className={`${s.holdAmt} num`}>{euro(h.amount_cents)} held</span>
-                  <span className={s.status} data-status={h.state === "captured" ? "succeeded" : h.state === "uncaptured" ? "requires_capture" : h.state === "refused" ? "refused" : "canceled"}>
-                    {h.state === "captured" ? `captured once · ${euro(h.captured ?? 0)}` : h.state}
+                  <span className={s.status} data-status={h.state === "captured" ? "succeeded" : h.state === "wrong" ? "wrong" : h.state === "stranded" ? "stranded" : h.state === "uncaptured" ? "requires_capture" : h.state === "refused" ? "refused" : "canceled"}>
+                    {h.state === "captured" ? `captured once · ${euro(h.captured ?? 0)}` : h.state === "wrong" ? `wrong driver · ${euro(h.captured ?? 0)}` : h.state}
                   </span>
                 </li>
               ))}
             </ul>
-          )}
-          <p className={s.holdNote}>Read from the world&apos;s state as the board sees it; the table below is what Stripe answered to each capture attempt.</p>
+          ) : null}
+          <p className={s.holdNote}>
+            One line per hold the world bound, with whose energy its money paid for{mode === "live" ? ", each checked against Stripe" : ""}. A red line is the wrong-driver capture: Stripe said succeeded, because Stripe only refuses a second capture, not a wrong one. The table below is what Stripe answered to each attempt.
+          </p>
         </div>
 
         <div className={`${s.card} ${s.captures}`}>
@@ -194,6 +234,8 @@ export function ProofView() {
             </dd>
           </dl>
         </div>
+
+        <Probe />
 
         <div className={`${s.card} ${s.verify}`}>
           <h2 className={s.cardTitle}>How to verify</h2>

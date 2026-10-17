@@ -367,3 +367,414 @@
     align-items: stretch;
   }
 }
+
+/* ---------- drivers: whose hold, whose energy */
+.driverLine {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) auto;
+  gap: 6px 16px;
+  align-items: center;
+  padding: 12px 0;
+  border-bottom: 1px solid oklch(0.3 0.02 60 / 0.08);
+  font-size: 15px;
+}
+
+.driverLine:last-child {
+  border-bottom: 0;
+}
+
+.driverLine[data-wrong="true"] {
+  background: linear-gradient(to right, var(--refused-carmine-soft), transparent 70%);
+  margin: 0 -8px;
+  padding-inline: 8px;
+}
+
+.driverLine[data-stranded="true"] {
+  background: repeating-linear-gradient(-45deg, oklch(0.95 0.07 72) 0 8px, transparent 8px 16px);
+  margin: 0 -8px;
+  padding-inline: 8px;
+}
+
+.driverBadge {
+  display: inline-grid;
+  place-items: center;
+  width: 54px;
+  height: 34px;
+  border-radius: 8px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  background: var(--enamel);
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.9),
+    inset 0 0 0 1px oklch(0.3 0.02 60 / 0.14);
+  text-shadow: 0 1px 0 oklch(1 0 0 / 0.9);
+}
+
+.driverStory {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.driverStory b {
+  font-weight: 700;
+}
+
+.driverLine[data-wrong="true"] .driverStory b {
+  color: var(--refused-carmine);
+}
+
+.driverLine[data-stranded="true"] .driverStory b {
+  color: var(--hold-amber-ink);
+}
+
+.driverMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-family: var(--font-code);
+  font-size: 12.5px;
+  color: var(--ink-mute);
+}
+
+.driverMeta a {
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  overflow-wrap: anywhere;
+}
+
+.status[data-status="stranded"] {
+  background: var(--hold-amber);
+  color: var(--ink);
+}
+
+.status[data-status="wrong"] {
+  background: var(--refused-carmine);
+  color: oklch(0.98 0.01 25);
+}
+
+.chargeList {
+  list-style: none;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed oklch(0.3 0.02 60 / 0.14);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14.5px;
+}
+
+.chargeList li {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.chargeList li::before {
+  content: "";
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--captured-green);
+  transform: translateY(-1px);
+}
+
+.chargeList li[data-status="refused"]::before {
+  background: var(--ink-mute);
+}
+
+.chargeList li[data-status="pending"]::before {
+  background: var(--hold-amber);
+}
+
+.chargeList li[data-wrong="true"]::before {
+  background: var(--refused-carmine);
+}
+
+.chargeList li[data-wrong="true"] {
+  color: var(--refused-carmine);
+  font-weight: 700;
+}
+
+/* ---------- the boundary probe */
+.probe {
+  grid-column: 1 / -1;
+}
+
+.probeHead {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.probeHead .btn {
+  flex: none;
+}
+
+.probeLede {
+  max-width: 78ch;
+  font-size: 15.5px;
+  color: var(--ink-soft);
+}
+
+.probeLede code {
+  font-size: 0.88em;
+}
+
+.vPass {
+  color: var(--captured-green-ink);
+}
+
+.vFail {
+  color: var(--refused-carmine);
+}
+
+.vDisc {
+  color: var(--hold-amber-ink);
+}
+
+.spin {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2.5px solid oklch(1 0 0 / 0.3);
+  border-top-color: currentColor;
+  animation: pspin 0.8s linear infinite;
+}
+
+@keyframes pspin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.probeSummary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 18px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-family: var(--font-code);
+  font-size: 13.5px;
+  color: var(--captured-green-ink);
+  background: oklch(0.94 0.06 145);
+}
+
+.probeSummary[data-state="fail"] {
+  color: var(--refused-carmine);
+  background: var(--refused-carmine-soft);
+}
+
+.probeLed {
+  flex: none;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--captured-green);
+  box-shadow: 0 0 8px oklch(0.6 0.17 145 / 0.7);
+}
+
+.probeLed[data-state="fail"] {
+  background: var(--refused-carmine);
+  box-shadow: 0 0 8px oklch(0.5 0.2 25 / 0.6);
+}
+
+.probeNote {
+  margin-top: 8px;
+  font-size: 13.5px;
+  color: var(--ink-mute);
+}
+
+.probeGroup {
+  margin-top: 20px;
+}
+
+.probeGroupTitle {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.probeGroupTitle small {
+  flex-basis: 100%;
+  font-weight: 400;
+  font-size: 13.5px;
+  color: var(--ink-mute);
+  max-width: 90ch;
+}
+
+.probeGroupLetter {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  font-family: var(--font-code);
+  font-size: 12px;
+  background: var(--steel-deep);
+  color: var(--ink-on-dark);
+  transform: translateY(-2px);
+}
+
+.probeList {
+  list-style: none;
+}
+
+.probeRow {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 12px;
+  padding: 9px 0;
+  border-top: 1px solid oklch(0.3 0.02 60 / 0.08);
+}
+
+.probeRow[data-verdict="fail"] {
+  background: linear-gradient(to right, var(--refused-carmine-soft), transparent 60%);
+  margin: 0 -8px;
+  padding-inline: 8px;
+}
+
+.probeRowLed {
+  width: 11px;
+  height: 11px;
+  margin: 5px 0 0 5px;
+  border-radius: 50%;
+  background: oklch(0.75 0.02 160);
+  box-shadow:
+    inset 0 1px 1px oklch(1 0 0 / 0.6),
+    0 0 0 2px oklch(0.3 0.02 60 / 0.1);
+}
+
+.probeRowLed[data-verdict="pass"] {
+  background: var(--captured-green);
+  box-shadow:
+    0 0 0 2px oklch(0.3 0.02 60 / 0.1),
+    0 0 8px oklch(0.6 0.17 145 / 0.7);
+}
+
+.probeRowLed[data-verdict="fail"] {
+  background: var(--refused-carmine);
+  box-shadow:
+    0 0 0 2px oklch(0.3 0.02 60 / 0.1),
+    0 0 8px oklch(0.5 0.2 25 / 0.6);
+}
+
+.probeRowLed[data-verdict="disclosed"] {
+  background: var(--hold-amber);
+  box-shadow:
+    0 0 0 2px oklch(0.3 0.02 60 / 0.1),
+    0 0 8px oklch(0.74 0.16 66 / 0.7);
+}
+
+.probeRowBody {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.probeLabel {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.probeDetail {
+  font-family: var(--font-code);
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+
+.probeDetail small {
+  color: var(--ink-mute);
+}
+
+.probeVerdict {
+  display: inline-block;
+  margin-right: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  background: oklch(0.9 0.01 80);
+  color: var(--ink-soft);
+}
+
+.probeVerdict[data-verdict="pass"] {
+  background: oklch(0.92 0.08 145);
+  color: var(--captured-green-ink);
+}
+
+.probeVerdict[data-verdict="fail"] {
+  background: var(--refused-carmine);
+  color: oklch(0.98 0.01 25);
+}
+
+.probeVerdict[data-verdict="disclosed"] {
+  background: oklch(0.94 0.08 72);
+  color: var(--hold-amber-ink);
+}
+
+.probeExpected {
+  font-size: 13px;
+  color: var(--refused-carmine);
+}
+
+.probeEnv {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 20px;
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px solid oklch(0.3 0.02 60 / 0.1);
+  font-size: 14px;
+}
+
+.probeEnv dt {
+  font-weight: 700;
+  color: var(--ink-soft);
+}
+
+.probeEnv dd {
+  overflow-wrap: anywhere;
+}
+
+.probeEnv dd[data-flagged="true"] {
+  color: var(--refused-carmine);
+  font-weight: 700;
+}
+
+@media (max-width: 760px) {
+  .driverLine {
+    grid-template-columns: 1fr;
+  }
+
+  .driverBadge {
+    width: auto;
+    justify-self: start;
+    padding: 0 10px;
+  }
+
+  .probeHead {
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .probeEnv {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+
+  .probeEnv dd {
+    margin-bottom: 8px;
+  }
+}
