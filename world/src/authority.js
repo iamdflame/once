@@ -24,10 +24,10 @@ export class PaymentAuthority {
   authorize(id, amount, currency = 'eur') {
     const pi = { id, object: 'payment_intent', amount, currency, amount_capturable: amount, amount_received: 0, status: 'requires_capture', capture_method: 'manual', attempts: 0 };
     this.pis.set(id, pi);
-    return { ...pi };
+    return pub(pi);
   }
 
-  get(id) { const p = this.pis.get(id); return p ? { ...p } : null; }
+  get(id) { const p = this.pis.get(id); return p ? pub(p) : null; }
 
   execute(intent) {
     return intent.amount_cents === 0 ? this.cancel(intent.payment_intent) : this.capture(intent.payment_intent, intent.amount_cents);
@@ -50,7 +50,7 @@ export class PaymentAuthority {
     pi.amount_received = amountToCapture;
     pi.amount_capturable = 0;
     pi.status = 'succeeded';
-    return { ok: true, status: 'succeeded', error: null, stripe_object: { ...pi, amount_released: pi.amount - amountToCapture } };
+    return { ok: true, status: 'succeeded', error: null, stripe_object: { ...pub(pi), amount_released: pi.amount - amountToCapture } };
   }
 
   cancel(id) {
@@ -58,13 +58,18 @@ export class PaymentAuthority {
     if (!pi) return fail('resource_missing', `No such payment_intent: '${id}'`, null);
     pi.attempts++;
     if (pi.status === 'succeeded') return fail('payment_intent_unexpected_state', MESSAGES.cancelAfterCapture, pi);
-    if (pi.status === 'canceled') return { ok: true, status: 'canceled', error: null, stripe_object: { ...pi } };
+    if (pi.status === 'canceled') return { ok: true, status: 'canceled', error: null, stripe_object: pub(pi) };
     pi.status = 'canceled';
     pi.amount_capturable = 0;
-    return { ok: true, status: 'canceled', error: null, stripe_object: { ...pi, amount_released: pi.amount } };
+    return { ok: true, status: 'canceled', error: null, stripe_object: { ...pub(pi), amount_released: pi.amount } };
   }
 }
 
 function fail(code, message, pi) {
-  return { ok: false, status: pi ? pi.status : 'error', error: { code, message }, stripe_object: pi ? { ...pi } : null };
+  return { ok: false, status: pi ? pi.status : 'error', error: { code, message }, stripe_object: pi ? pub(pi) : null };
+}
+
+function pub(pi) {
+  const { attempts, ...rest } = pi;
+  return { ...rest };
 }
