@@ -11,7 +11,7 @@ Ordered by dependency, not by date: no dates are promised. "Built" means in this
 | `world/`: CSMS, 12 chargers with quirks, link proxy, v1 naive `settle.js`, 30-scenario runner, HTTP API | in progress |
 | `app/`: charger grid, event stream, receipt strip, agent panel; Stripe hold and idempotent capture; CreateOS orchestration; agent loop | in progress |
 | Deployed demo on Vercel; golden path run end to end from a clean browser | next |
-| Results table in the README filled from the real suite | next (blocked on `world/`) |
+| Results table in the README filled from the real suite | done (measured 2026-10-17) |
 
 ## Phase 1: make the proof credible
 

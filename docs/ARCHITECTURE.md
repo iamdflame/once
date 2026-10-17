@@ -66,7 +66,7 @@ A Next.js app deployed on Vercel (provisioned through Stripe Projects). It:
 
 - creates or reuses the world sandbox with the CreateOS SDK (`CREATEOS_PROJECT_API_KEY`, aliased to `CREATEOS_SANDBOX_API_KEY`), uploads `world/`, starts it, and keeps it paused when idle (the free plan allows 1 concurrent sandbox and 10 creates per rolling 24 hours);
 - creates Stripe Checkout Sessions (EUR, `payment_intent_data.capture_method=manual`, EUR 50 hold) for "plug in charger N";
-- polls the world for pending capture intents, **executes each capture on Stripe with an idempotency key derived from the episode id**, and posts Stripe's answer back to the world so a refused duplicate is visible with Stripe's own words;
+- polls the world for pending capture intents, **executes each capture on Stripe with an idempotency key derived from the world's intent id (with the hold and episode)**, and posts Stripe's answer back to the world so a refused duplicate is visible with Stripe's own words;
 - runs the agent loop (section 3).
 
 ### 2.3 The stack (Stripe Projects)
@@ -92,7 +92,7 @@ From the research dossier (D4):
 - Episode = a plug-in, keyed by (charger, connector, Checkout Session), not by OCPP `transactionId`. A reboot-split session yields two transactions in one episode.
 - Deduplicate Stop messages by hash(charger, transaction, meterStop), plus a PAYGo-style accepted window on meter monotonicity (OCPP 2.0.1's `seqNo` for gap detection if that profile is added).
 - Capture is bound to the connector returning to Available (or hold timeout minus a margin).
-- One idempotency key per episode; a partial capture releases the remainder.
+- One idempotency key per capture intent; a partial capture releases the remainder.
 - MeterValues keep a lower bound so a lost Stop still bills something.
 
 Firmware quirks the simulator reproduces (each documented in vendor KBs or the OASIS OCPP list, see the dossier): queue transactions offline and resend on reconnect; deliver a queued StopTransaction twice; reboot splits one plug-in into two transactions; Stop for a never-seen Start; meter reset on reboot.
@@ -104,7 +104,7 @@ In the design simulation (10,000 randomized fault schedules, invented fault rate
 1. Driver pays the EUR 50 hold in Checkout; the host records the PaymentIntent id against the charger's episode and tells the world the episode has a hold.
 2. Charger 7 starts a transaction; the link is cut; the charger keeps metering and queues messages.
 3. On restore, the queued StopTransaction arrives twice. `settle.js` accepts one and drops the duplicate; it emits one intent `{episode_id, payment_intent, amount_cents: 1140}`.
-4. The host captures `amount_to_capture=1140` with idempotency key = episode id. The remaining EUR 38.60 is released by Stripe.
+4. The host captures `amount_to_capture=1140` with an idempotency key derived from the intent id. The remaining EUR 38.60 is released by Stripe.
 5. With the naive v1 and the reboot-restart quirk, two intents are emitted; the second capture is refused by Stripe and that refusal is shown, then v2 is written and the suite re-run.
 
 ## 6. Failure and degraded modes
@@ -112,7 +112,7 @@ In the design simulation (10,000 randomized fault schedules, invented fault rate
 - **The cut does not sever an established WebSocket.** Because chargers connect through the world's own link proxy, "cut" is implemented by the proxy dropping the connection and refusing reconnects, not by relying on a network-level detach. Every cut is shown in the event stream. (A multi-sandbox design using CreateOS network detach/attach was considered in the dossier; the build uses one sandbox because of free-plan limits.)
 - **Sandbox quota.** The world is reused and paused when idle; a local mode (`world/` on localhost) is the fallback and is labelled as local in the UI.
 - **Model unavailable or slow.** The host has a timeout; the demo falls back to the last good `settle.js` and says so.
-- **Stripe unreachable.** Intents stay pending in the world; nothing is lost and nothing is captured twice, because the idempotency key is fixed per episode.
+- **Stripe unreachable.** Intents stay pending in the world; nothing is lost and nothing is captured twice, because each intent's idempotency key is fixed.
 
 ## 7. What is not in the design
 

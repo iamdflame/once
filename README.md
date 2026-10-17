@@ -2,17 +2,17 @@
 
 **Exactly-once payments for EV chargers.**
 
-Once is an agent that writes the hold-meter-capture payment code for public EV chargers, runs that code inside a CreateOS sandbox that has no internet and no keys, and proves it against a fleet of simulated OCPP chargers that it can cut, reboot and reconnect at will. Stripe is the witness: the charger reports the stop twice, Stripe captures once (EUR 11.40), and the duplicate capture is refused by Stripe itself.
+Once is an agent that writes the hold-meter-capture payment code for public EV chargers, runs that code inside a CreateOS sandbox that has no internet and no keys, and proves it against a fleet of simulated OCPP chargers that it can cut, reboot and reconnect at will. Stripe is the witness: when the charger reports the stop twice, Stripe captures once and refuses the duplicate in its own words.
 
-> Cut the cable, pull the plug, bring it back. The charger reported the stop twice. Stripe captured once: EUR 11.40.
+> Cut the cable, pull the plug, bring it back. The charger reported the stop twice. Stripe captured once.
 
-Status: built during the CreateOS x Stripe "agent that writes and runs its own code" hackathon, from an empty directory, on a Stripe Projects stack. Everything money-related runs in **Stripe test mode** (see [Test-mode labelling](#test-mode-labelling)). Parts that are not live yet are marked **planned**.
+Status: built during the CreateOS x Stripe "agent that writes and runs its own code" hackathon on a Stripe Projects stack; the product code started from an empty directory at kickoff (research and planning happened before, see [Built during the event](#built-during-the-event)). Everything money-related runs in **Stripe test mode** (see [Test-mode labelling](#test-mode-labelling)). Parts that are not live yet are marked **planned**.
 
 | Piece | State |
 |---|---|
 | Stripe Projects stack (CreateOS, OpenRouter, Vercel) | provisioned, see `.projects/state.json` |
 | `app/` Next.js host and UI | **live** at https://once-seven.vercel.app (board, agent bench, proof; API routes; Stripe executor; agent loop) |
-| `world/` OCPP fleet, link proxy, scenario runner | **live** in the CreateOS sandbox `once-world` (no egress, no keys); 25/25 tests |
+| `world/` OCPP fleet, link proxy, scenario runner | **live** in the CreateOS sandbox `once-world` (no egress, no keys); 25/25 tests covering the scenario suite, vm escape attempts, the payment authority, the API over real OCPP WebSockets and the single-file bundle |
 | Docs: architecture, threat model, business, roadmap | written, in `docs/` |
 
 ---
@@ -26,7 +26,7 @@ Once closes that loop:
 1. The **agent** (a language model) writes the settlement program, `settle.js`: it reads the OCPP event stream and emits capture intents `{episode_id, payment_intent, amount_cents}`.
 2. The program runs inside a **CreateOS sandbox** (the "world") that has an egress allowlist containing a single sinkhole, so it has no internet at all, and it holds no keys. Inside the same sandbox are a CSMS and 12 simulated chargers with documented firmware quirks, and a per-charger link proxy so any charger can be cut, restored or rebooted.
 3. A **scenario suite** (30 seeded fault scenarios) runs in the sandbox and reports `stranded`, `double` and `unbilled` per scenario. If a scenario is red the agent rewrites `settle.js` and the suite runs again (up to 3 attempts).
-4. Only **intents** leave the sandbox. The **host** executes each capture on Stripe with an idempotency key derived from the world's intent id (with the hold and episode) and reports Stripe's answer back. Stripe is the final judge of "once".
+4. Only **intents** leave the sandbox. The **host** executes each capture on Stripe with an idempotency key derived from the world's intent id (with the hold and episode) and reports Stripe's answer back. Stripe witnesses every capture.
 
 ## The 2-minute demo path
 
@@ -69,7 +69,7 @@ node scripts/suite.mjs settlers/reference-episode-ledger.js   # the same 30 with
 PORT=8080 node dist/world.cjs                                # CSMS + 12 chargers + HTTP API, one file, no network needed
 ```
 
-Expected: v1 shows non-zero `double` or `stranded` on the reboot-restart and duplicate-Stop scenarios; v2 shows `stranded 0 | double 0 | unbilled 0`. The results table below is filled from that run.
+Expected: v1 shows non-zero `double` or `stranded` on the reboot-restart and duplicate-Stop scenarios; v2 shows `stranded 0 | double 0 | unbilled 0`.
 
 **On the deployed app:** open https://once-seven.vercel.app, run the demo path above, and open the Stripe Dashboard (test mode) to see exactly one captured PaymentIntent for the session.
 
@@ -99,7 +99,7 @@ flowchart LR
     UI[UI: charger grid, event stream, agent panel]
     API[API routes]
     AG[Agent loop: model writes settle.js]
-    EX[Capture executor: idempotency key = episode id]
+    EX[Capture executor: idempotency key = intent id]
   end
   subgraph World["World: one CreateOS sandbox, no internet, no keys"]
     CSMS[CSMS - OCPP 1.6J over WebSocket]
@@ -128,7 +128,7 @@ Details in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Results
 
-Filled from the world's suite when it exists. Until then only the design simulation is available.
+The first table is a design simulation (a model with invented fault rates, run before the build to settle the design), not a product measurement. The second table is measured on the product.
 
 | Check | Naive: capture on first Stop | Episode ledger | Episode ledger + MeterValues | Source |
 |---|---|---|---|---|
@@ -150,14 +150,14 @@ The code the agent writes is untrusted by construction, and it is the code that 
 
 - The world sandbox has **no egress** (allowlist is a single sinkhole) and **no keys**: nothing to exfiltrate to and nothing to exfiltrate.
 - `settle.js` runs in a Node `vm` with no `fs`, `net` or `process`; its only output is capture intents.
-- The **host** executes captures, with an idempotency key derived from the episode id, and bounds each intent by the hold.
+- The **host** executes captures, with an idempotency key derived from the world's intent id (with the hold and episode), and bounds each intent by the hold.
 - **Stripe refuses duplicates**: one capture per authorization, regardless of what the settlement program or the host does.
 
 Full analysis, including what is not covered: [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
 
 ## The company in five lines
 
-1. **Who pays:** charge-point operators and CSMS vendors who must offer ad-hoc card payment at public points (EU AFIR, Regulation (EU) 2023/1804 Art. 5).
+1. **Who pays:** charge-point operators and CSMS vendors who must offer ad-hoc payment at public points (EU AFIR, Regulation (EU) 2023/1804 Art. 5: card readers or contactless at new points of 50 kW and above; secure internet-based payment such as QR below 50 kW).
 2. **Market:** 1.1 million public charge points in the EU at the end of 2025, five times 2020 (Transport & Environment, July 2026).
 3. **Price (estimate):** EUR 2-5 per charger per month for the proven payment module and fault suite; EUR 0.5-1k per month per CSMS vendor for the conformance runner.
 4. **Moat:** a library of real firmware deviations as runnable scenarios, growing with every customer run.
