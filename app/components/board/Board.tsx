@@ -13,7 +13,7 @@ import s from "./board.module.css";
 type Notice = { tone: "ok" | "warn" | "err"; text: string } | null;
 
 export function Board() {
-  const { world, snap, mode } = useWorld();
+  const { world, snap, mode, setMode } = useWorld();
   const [selected, setSelected] = useState<string | null>("CP07");
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
@@ -42,6 +42,11 @@ export function Board() {
       return;
     }
     if (!sid) return;
+    // A session id only ever comes back from a real Stripe redirect: wait for (or switch to) the live world.
+    if (mode !== "live") {
+      setMode("live");
+      return;
+    }
     confirmed.current = true;
     if (ch) setSelected(ch);
     setBusy("confirm");
@@ -62,7 +67,7 @@ export function Board() {
         setBusy(null);
         history.replaceState(null, "", "/");
       });
-  }, [world]);
+  }, [world, mode, setMode]);
 
   const onCmd = useCallback(
     async (c: Command) => {
