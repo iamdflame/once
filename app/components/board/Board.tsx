@@ -7,7 +7,7 @@ import { Wall } from "./Wall";
 import { Controls } from "./Controls";
 import { CheckoutSheet } from "./CheckoutSheet";
 import { WireLog } from "./WireLog";
-import { Guide, type GuideStep } from "./Guide";
+import { Guide, type GuideCapture, type GuideStep } from "./Guide";
 import { Receipt } from "@/components/ledger/Receipt";
 import s from "./board.module.css";
 
@@ -27,9 +27,11 @@ export function Board() {
   const capsAtRestore = useRef(0);
 
   const charger = snap.chargers.find((c) => c.id === selected) ?? null;
-  const capturesFor = useCallback((id: string | null) => snap.receipt.filter((l) => l.kind === "capture" && l.charger === id), [snap.receipt]);
-  const capturedLine = reached >= 4 && selected ? (capturesFor(selected).slice(capsAtRestore.current)[0] ?? null) : null;
-  const captured = capturedLine ? { amount_cents: capturedLine.amount_cents ?? 0 } : null;
+  const capturesFor = useCallback((id: string | null) => snap.receipt.filter((l) => (l.kind === "capture" || l.kind === "wrong") && l.charger === id), [snap.receipt]);
+  const capturedLine = reached >= 5 && selected ? (capturesFor(selected).slice(capsAtRestore.current)[0] ?? null) : null;
+  const captured: GuideCapture | null = capturedLine
+    ? { amount_cents: capturedLine.amount_cents ?? 0, wrong_driver: capturedLine.kind === "wrong", driver: capturedLine.driver, energy_driver: capturedLine.energy_driver }
+    : null;
 
   const pick = useCallback((id: string) => {
     setSelected(id);
@@ -95,9 +97,9 @@ export function Board() {
             const had = Math.max(r, charger && (charger.hold || charger.plugged) ? 1 : 0);
             if (c.op === "cut" && had >= 1) return 2;
             if (c.op === "unplug" && had >= 2) return 3;
-            if (c.op === "restore" && had >= 3) {
+            if (c.op === "restore" && had >= 4) {
               capsAtRestore.current = capturesFor(c.charger).length;
-              return 4;
+              return 5;
             }
             return r;
           });
@@ -130,6 +132,23 @@ export function Board() {
     [world],
   );
 
+  // The next driver's €50 test hold on this charger (driver B after A): created server-side in test mode.
+  const onNextHold = useCallback(
+    async (id: string) => {
+      setBusy("next-hold");
+      try {
+        const r = await world.nextHold(id);
+        setNotice({ tone: "ok", text: `${r.label} · ${r.payment_intent} · bound to the next plug-in on ${r.charger}.` });
+        if (id === selected) setReached((x) => (x >= 3 ? 4 : x));
+      } catch (e) {
+        setNotice({ tone: "err", text: `The test hold could not be placed: ${(e as Error).message}` });
+      } finally {
+        setBusy(null);
+      }
+    },
+    [world, selected],
+  );
+
   return (
     <>
       <section className={`wrap ${s.hero}`}>
@@ -140,7 +159,16 @@ export function Board() {
           The charger reports the stop twice. Stripe captures once. Twelve simulated OCPP 1.6J chargers run inside a CreateOS sandbox that holds no keys and refuses web traffic to anything off its allowlist; the agent&apos;s settlement code runs
           there too, and only capture intents leave.
         </p>
-        <Guide charger={charger} reached={reached} captured={captured} busy={busy} onPay={onPay} onCmd={(op, id) => void onCmd({ op, charger: id })} />
+        <Guide
+          charger={charger}
+          reached={reached}
+          captured={captured}
+          busy={busy}
+          agentWritten={snap.settle.author === "agent"}
+          onPay={onPay}
+          onCmd={(op, id) => void onCmd({ op, charger: id })}
+          onNextHold={onNextHold}
+        />
       </section>
 
       <section className={s.wallBand} aria-label="The wall">
@@ -150,7 +178,7 @@ export function Board() {
       </section>
 
       <section className={`wrap ${s.bench}`}>
-        <Controls charger={charger} busy={busy} notice={notice} onCmd={onCmd} onPay={onPay} />
+        <Controls charger={charger} busy={busy} notice={notice} onCmd={onCmd} onPay={onPay} onNextHold={onNextHold} />
         <Receipt lines={snap.receipt} mode={mode} />
         <WireLog events={snap.events} filter={selected} worldTime={mode === "live"} />
       </section>

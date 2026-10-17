@@ -40,8 +40,53 @@
   flex: 1;
   min-width: 0;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
+}
+
+.guideShort {
+  display: none;
+}
+
+.guideStep[data-wrong="true"] .guideN {
+  color: oklch(0.98 0.01 25);
+  background: var(--refused-carmine);
+  box-shadow:
+    inset 0 1px 1px oklch(1 0 0 / 0.3),
+    0 0 0 2px oklch(0.3 0.02 60 / 0.08),
+    0 0 10px 1px oklch(0.5 0.2 25 / 0.6);
+}
+
+.guideStep[data-wrong="true"] .guideText small {
+  color: var(--refused-carmine);
+  font-weight: 700;
+}
+
+.guide {
+  flex-wrap: wrap;
+}
+
+.guideVerdict {
+  flex-basis: 100%;
+  margin: 2px 2px 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 14.5px;
+  line-height: 1.45;
+  color: var(--captured-green-ink);
+  background: oklch(0.94 0.06 145);
+  box-shadow: inset 2px 0 0 var(--captured-green);
+}
+
+.guideVerdict[data-wrong="true"] {
+  color: var(--refused-carmine);
+  background: var(--refused-carmine-soft);
+  box-shadow: inset 2px 0 0 var(--refused-carmine);
+}
+
+.nextHold {
+  flex-basis: 100%;
+  justify-content: center;
 }
 
 .guideStep {
@@ -144,6 +189,11 @@
 
 .guideStep[data-state="done"] .guideText small {
   color: var(--captured-green-ink);
+}
+
+/* the last step carries the outcome: let it wrap */
+.guideStep[data-state="done"]:last-child .guideText small {
+  white-space: normal;
 }
 
 .guideActions {
@@ -1158,6 +1208,14 @@
     font-size: 12.5px;
   }
 
+  .guideLong {
+    display: none;
+  }
+
+  .guideShort {
+    display: inline;
+  }
+
   .guideText small {
     display: none;
   }
@@ -1180,6 +1238,10 @@
 
   .guideActions .btn-ghost {
     min-height: 40px;
+  }
+
+  .guideVerdict {
+    font-size: 13.5px;
   }
 
   .wallBand {

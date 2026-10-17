@@ -6,6 +6,7 @@
 import type { AgentRun, DriverCharge, DriverHold, DriverLedger, NextHold, ProbeReport, ProofWithDrivers, WorldAdapter } from "./adapter";
 import { chargeStory, emptyReport, holdStory, totals } from "./adapter";
 import { SETTLE_V1, SETTLE_V2 } from "./settle-sources";
+import { unifiedDiff } from "@/components/bench/Diff";
 import type {
   AgentEvent,
   Capture,
@@ -328,6 +329,7 @@ export class MockWorld implements WorldAdapter {
   private attrib = new Map<string, { driver: string | null; energy_driver: string | null; energy_episode_id: string | null; wrong_driver: boolean | null }>();
   private ended = new Set<string>();
   private lastRun: AgentRun | null = null;
+  private strandedPrinted = new Set<string>();
 
   constructor() {
     this.seed();
@@ -401,6 +403,7 @@ export class MockWorld implements WorldAdapter {
     this.txOwner.clear();
     this.attrib.clear();
     this.ended.clear();
+    this.strandedPrinted.clear();
     this.seed();
     this.start();
     this.emit();
@@ -714,7 +717,8 @@ export class MockWorld implements WorldAdapter {
     c.episode = null;
     this.log(c.id, "world", `POST /hold · ${pi} bound to the next episode on ${c.id} (${episode_id})`, "in", true);
     this.settler.onEvent({ type: "hold", charger: c.id, payment_intent: pi, amount_cents: HOLD, episode_id });
-    this.print({ kind: "hold", charger: c.id, amount_cents: HOLD, payment_intent: pi, stripe_url: stripeUrl(pi), text: `HOLD €50.00 on ${c.id}` });
+    const driver = this.stripe.get(pi)?.driver ?? null;
+    this.print({ kind: "hold", charger: c.id, amount_cents: HOLD, payment_intent: pi, stripe_url: stripeUrl(pi), driver, text: `HOLD €50.00 on ${c.id}${driver ? ` (driver ${driver})` : ""}` });
     this.plug(c);
     return { payment_intent: pi };
   }
@@ -751,7 +755,7 @@ export class MockWorld implements WorldAdapter {
     this.log(c.id, "stripe", `PaymentIntent ${pi} · €50.00 · pm_card_visa · capture_method manual · driver ${driver}'s test hold · requires_capture`, "in", true);
     this.log(c.id, "world", `POST /hold · ${pi} (driver ${driver}) bound to the next plug-in on ${c.id}`, "in", true);
     this.settler.onEvent({ type: "hold", charger: c.id, payment_intent: pi, amount_cents: HOLD, episode_id });
-    this.print({ kind: "hold", charger: c.id, amount_cents: HOLD, payment_intent: pi, stripe_url: stripeUrl(pi), text: `HOLD €50.00 on ${c.id} (driver ${driver})` });
+    this.print({ kind: "hold", charger: c.id, amount_cents: HOLD, payment_intent: pi, stripe_url: stripeUrl(pi), driver, text: `HOLD €50.00 on ${c.id} (driver ${driver}, test hold)` });
     return { payment_intent: pi, driver, charger, label: `Driver ${driver}'s test hold: €50.00 authorised in Stripe test mode with the test card pm_card_visa, created server-side (mock)`, dashboard_url: stripeUrl(pi) };
   }
 
@@ -851,7 +855,10 @@ export class MockWorld implements WorldAdapter {
 
   async tick(): Promise<void> {
     const pending = this.intents.filter((i) => !i.result);
-    if (pending.length === 0) return;
+    if (pending.length === 0) {
+      this.printStranded();
+      return;
+    }
     for (const intent of pending) {
       await sleep(400);
       const pi = this.stripe.get(intent.payment_intent);
@@ -869,13 +876,21 @@ export class MockWorld implements WorldAdapter {
           h.captured_cents = intent.amount_cents;
         }
         this.log(intent.charger, "stripe", `capture ${pi.id} amount_to_capture=${intent.amount_cents} idempotency_key=once-cap-${intent.episode_id}-… → succeeded`, "in", true);
+        const a = this.attrib.get(intent.id ?? "");
+        const driver = a?.driver ?? pi.driver ?? null;
+        const energy = a?.energy_driver ?? null;
+        const wrong = a?.wrong_driver ?? null;
+        const eur = `€${(intent.amount_cents / 100).toFixed(2)}`;
         this.print({
-          kind: "capture",
+          kind: wrong ? "wrong" : "capture",
           charger: intent.charger,
           amount_cents: intent.amount_cents,
           payment_intent: pi.id,
           stripe_url: stripeUrl(pi.id),
-          text: `CAPTURE €${(intent.amount_cents / 100).toFixed(2)}`,
+          driver,
+          energy_driver: energy,
+          wrong_driver: wrong,
+          text: wrong ? `DRIVER ${driver ?? "?"} CHARGED ${eur} FOR DRIVER ${energy ?? "?"}'S ENERGY · Stripe: succeeded` : `CAPTURE ${eur}${driver ? ` · driver ${driver}, own energy` : ""}`,
         });
         await sleep(350);
         this.print({
@@ -884,23 +899,56 @@ export class MockWorld implements WorldAdapter {
           amount_cents: pi.amount - intent.amount_cents,
           payment_intent: pi.id,
           stripe_url: stripeUrl(pi.id),
+          driver,
           text: `RELEASED €${((pi.amount - intent.amount_cents) / 100).toFixed(2)}`,
         });
       } else {
         const msg = "This PaymentIntent could not be captured: the remainder of the authorized amount has been released.";
         intent.result = { ok: false, status: "refused", error: msg, stripe_object: pi.id };
         this.log(intent.charger, "stripe", `capture ${pi.id} amount_to_capture=${intent.amount_cents} → 400 invalid_request_error: ${msg}`, "in", true);
+        const a = this.attrib.get(intent.id ?? "");
+        const driver = a?.driver ?? pi.driver ?? null;
+        const energy = a?.energy_driver ?? null;
         this.print({
           kind: "refused",
           charger: intent.charger,
           amount_cents: intent.amount_cents,
           payment_intent: pi.id,
           stripe_url: stripeUrl(pi.id),
-          text: `REFUSED: ${msg}`,
+          driver,
+          energy_driver: energy,
+          wrong_driver: a?.wrong_driver ?? null,
+          text: `REFUSED${driver ? ` (driver ${driver}${energy && energy !== driver ? `, for driver ${energy}'s energy` : ""})` : ""}: ${msg}`,
         });
       }
     }
+    this.printStranded();
     this.emit();
+  }
+
+  /** A hold whose session is over, still uncaptured, with nothing pending for it: the driver's €50 stays blocked. Printed once. */
+  private printStranded() {
+    for (const c of this.chargers.values()) {
+      for (const h of [c.hold, ...c.nextHolds]) {
+        if (!h || h.status !== "uncaptured" || !h.episode_id || !this.ended.has(h.episode_id)) continue;
+        // Not stranded while the charger is still offline or still draining its queue: the Stop may yet arrive.
+        if (c.link !== "up" || c.queue.length > 0) continue;
+        if (this.intents.some((i) => i.payment_intent === h.payment_intent && !i.result)) continue;
+        if (this.strandedPrinted.has(h.payment_intent)) continue;
+        this.strandedPrinted.add(h.payment_intent);
+        const driver = this.stripe.get(h.payment_intent)?.driver ?? null;
+        this.log(c.id, "world", `hold ${h.payment_intent} (driver ${driver ?? "?"}) is stranded: ${h.episode_id} ended, nothing captured, nothing pending`, "in", true);
+        this.print({
+          kind: "stranded",
+          charger: c.id,
+          amount_cents: h.amount_cents,
+          payment_intent: h.payment_intent,
+          stripe_url: stripeUrl(h.payment_intent),
+          driver,
+          text: `DRIVER ${driver ?? "?"}'S €${(h.amount_cents / 100).toFixed(2)} HOLD STRANDED · session over, nothing captured`,
+        });
+      }
+    }
   }
 
   // ---- suite and agent
@@ -956,7 +1004,13 @@ export class MockWorld implements WorldAdapter {
           attempts: [{ n: 1, model: "claude-sonnet-4-5", provider: "mock replay", plan: "Key the ledger by the plug-in episode, not the transactionId.", suite: after, deployed: e.ok }],
           deployed: e.ok ? { version: e.version, suite: after } : null,
           version: e.version,
-          final_diff: { attempt: 1, added: SETTLE_V2.split("\n").length, removed: SETTLE_V1.split("\n").length, unified: "", source: SETTLE_V2 },
+          final_diff: {
+            attempt: 1,
+            added: SETTLE_V2.split("\n").length,
+            removed: SETTLE_V1.split("\n").length,
+            unified: unifiedDiff(SETTLE_V1, SETTLE_V2, "settle.js v1 (naive)", "settle.js v2 (episode ledger)"),
+            source: SETTLE_V2,
+          },
           errors: [],
           timings: { model_ms: 4200, suite_ms: 5100, total_ms: Date.now() - t0 },
         };

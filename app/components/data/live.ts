@@ -312,26 +312,41 @@ function buildReceipt(holds: J[], intents: Intent[]): ReceiptLine[] {
     const charger = str(h.charger);
     const auth = num(h.amount_cents, 5000);
     const placed = when(h.placed_at);
-    lines.push({ id: `hold-${pi}`, t: placed, kind: "hold", charger, amount_cents: auth, payment_intent: pi, stripe_url: stripeUrl(pi), text: `HOLD ${euro(auth)} on ${charger}` });
+    const driver = str(h.driver) || null;
+    const who = driver ? ` (driver ${driver})` : "";
+    let last = placed;
+    lines.push({ id: `hold-${pi}`, t: placed, kind: "hold", charger, amount_cents: auth, payment_intent: pi, stripe_url: stripeUrl(pi), driver, text: `HOLD ${euro(auth)} on ${charger}${who}` });
     arr(h.results)
       .map(obj)
       .forEach((r, k) => {
         const i = byWorldId.get(str(r.intent));
         const t = (i?.created_at || placed) + k * 2 + 1;
+        last = Math.max(last, t + 1);
         const amt = num(r.amount_cents);
         const kind = str(r.kind, "capture");
+        const rDriver = str(r.driver) || driver;
+        const energy = str(r.energy_driver) || null;
+        const wrong = typeof r.wrong_driver === "boolean" ? r.wrong_driver : null;
+        const base = { charger, payment_intent: pi, stripe_url: stripeUrl(pi), driver: rDriver, energy_driver: energy, wrong_driver: wrong };
         if (r.ok && kind === "capture") {
-          lines.push({ id: `cap-${pi}-${k}`, t, kind: "capture", charger, amount_cents: amt, payment_intent: pi, stripe_url: stripeUrl(pi), text: `CAPTURE ${euro(amt)}` });
+          if (wrong) {
+            lines.push({ ...base, id: `cap-${pi}-${k}`, t, kind: "wrong", amount_cents: amt, text: `DRIVER ${rDriver ?? "?"} CHARGED ${euro(amt)} FOR DRIVER ${energy ?? "?"}'S ENERGY · Stripe: succeeded` });
+          } else {
+            lines.push({ ...base, id: `cap-${pi}-${k}`, t, kind: "capture", amount_cents: amt, text: `CAPTURE ${euro(amt)}${rDriver ? ` · driver ${rDriver}, own energy` : ""}` });
+          }
           const rel = num(h.amount_released, auth - amt);
-          if (rel > 0) lines.push({ id: `rel-${pi}-${k}`, t: t + 1, kind: "released", charger, amount_cents: rel, payment_intent: pi, stripe_url: stripeUrl(pi), text: `RELEASED ${euro(rel)}` });
+          if (rel > 0) lines.push({ ...base, id: `rel-${pi}-${k}`, t: t + 1, kind: "released", amount_cents: rel, text: `RELEASED ${euro(rel)}` });
         } else if (r.ok && kind === "release") {
-          lines.push({ id: `rel-${pi}-${k}`, t, kind: "released", charger, amount_cents: auth, payment_intent: pi, stripe_url: stripeUrl(pi), text: `RELEASED ${euro(auth)} (no energy)` });
+          lines.push({ ...base, id: `rel-${pi}-${k}`, t, kind: "released", amount_cents: auth, text: `RELEASED ${euro(auth)} (no energy)` });
         } else {
           const err = r.error;
           const msg = err == null ? str(r.status, "refused") : typeof err === "string" ? err : str(obj(err).message ?? JSON.stringify(err));
-          lines.push({ id: `ref-${pi}-${k}`, t, kind: "refused", charger, amount_cents: amt, payment_intent: pi, stripe_url: stripeUrl(pi), text: `REFUSED: ${stripeMsg(msg)}` });
+          lines.push({ ...base, id: `ref-${pi}-${k}`, t, kind: "refused", amount_cents: amt, text: `REFUSED${rDriver ? ` (driver ${rDriver}${energy && energy !== rDriver ? `, for driver ${energy}'s energy` : ""})` : ""}: ${stripeMsg(msg)}` });
         }
       });
+    if (h.stranded === true) {
+      lines.push({ id: `str-${pi}`, t: last + 1, kind: "stranded", charger, amount_cents: auth, payment_intent: pi, stripe_url: stripeUrl(pi), driver, text: `DRIVER ${driver ?? "?"}'S ${euro(auth)} HOLD STRANDED · session over, nothing captured` });
+    }
   }
   return lines.sort((a, b) => a.t - b.t);
 }

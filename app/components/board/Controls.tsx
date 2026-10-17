@@ -12,12 +12,15 @@ export function Controls({
   notice,
   onCmd,
   onPay,
+  onNextHold,
 }: {
   charger: Charger | null;
   busy: string | null;
   notice: { tone: "ok" | "warn" | "err"; text: string } | null;
   onCmd(c: Command): void;
   onPay(id: string): void;
+  /** Driver B's €50 test hold on this charger, created server-side in Stripe test mode. */
+  onNextHold(id: string): void;
 }) {
   const [showQuirks, setShowQuirks] = useState(true);
   const c = charger;
@@ -70,6 +73,16 @@ export function Controls({
         <button type="button" className="btn btn-ghost btn-sm" disabled={dis(!!c?.plugged || c?.link !== "up")} onClick={() => onCmd({ op: "plug", charger: id })} title="Start a session authorised by RFID, with no Stripe hold">
           Plug in with RFID
         </button>
+        <button
+          type="button"
+          className={`btn btn-steel btn-sm ${s.nextHold}`}
+          disabled={dis(false)}
+          onClick={() => c && onNextHold(c.id)}
+          title="The wrong-driver demo: the next driver's €50 hold on this charger, a Stripe test-mode PaymentIntent created server-side with the test card (pm_card_visa), bound to the next plug-in"
+        >
+          <DriverIcon />
+          {busy === "next-hold" ? "Authorising…" : "Next driver pays €50 test hold"}
+        </button>
       </div>
 
       <p className={`${s.notice} ${notice ? s[`notice_${notice.tone}`] : ""}`} role="status" aria-live="polite">
@@ -121,6 +134,15 @@ export function Controls({
         </Link>
       </div>
     </section>
+  );
+}
+
+function DriverIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4 21a8 8 0 0 1 16 0" />
+    </svg>
   );
 }
 

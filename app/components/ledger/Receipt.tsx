@@ -30,7 +30,7 @@ export function Receipt({ lines, mode, tall = false }: { lines: ReceiptLine[]; m
             <p>
               {mode === "live" ? "Stripe · test mode" : "Stripe stand-in · mock"}
               <br />
-              one capture per plug-in episode
+              one capture per plug-in episode, on that driver&apos;s hold
             </p>
             <span className={s.rule} aria-hidden="true" />
           </header>
@@ -44,6 +44,16 @@ export function Receipt({ lines, mode, tall = false }: { lines: ReceiptLine[]; m
             ) : null}
             {lines.map((l) => (
               <li key={l.id} className={s.line} data-kind={l.kind}>
+                {l.kind === "wrong" ? (
+                  <span className={s.flag} aria-hidden="true">
+                    WRONG DRIVER
+                  </span>
+                ) : null}
+                {l.kind === "stranded" ? (
+                  <span className={`${s.flag} ${s.flagStranded}`} aria-hidden="true">
+                    STRANDED
+                  </span>
+                ) : null}
                 <span className={s.lineMain}>
                   <span className={s.lineText}>{l.text}</span>
                   {l.kind !== "refused" && l.kind !== "note" && l.amount_cents != null ? (
@@ -52,6 +62,12 @@ export function Receipt({ lines, mode, tall = false }: { lines: ReceiptLine[]; m
                 </span>
                 <span className={s.lineMeta}>
                   {l.charger ? <span>{l.charger}</span> : null}
+                  {l.driver ? (
+                    <span className={s.driverTag} data-wrong={l.kind === "wrong"}>
+                      driver {l.driver}
+                      {l.kind === "wrong" && l.energy_driver ? ` paid for ${l.energy_driver}` : ""}
+                    </span>
+                  ) : null}
                   {l.payment_intent ? (
                     <a href={l.stripe_url} target="_blank" rel="noreferrer" title="Open the PaymentIntent in the Stripe dashboard (test mode)">
                       {l.payment_intent.length > 18 ? `${l.payment_intent.slice(0, 10)}…${l.payment_intent.slice(-4)}` : l.payment_intent}
@@ -64,7 +80,7 @@ export function Receipt({ lines, mode, tall = false }: { lines: ReceiptLine[]; m
           </ol>
           <footer className={s.foot} aria-hidden="true">
             <span className={s.rule} />
-            <span>stranded holds are counted · duplicates are Stripe&apos;s to refuse</span>
+            <span>stranded holds are counted · duplicates are Stripe&apos;s to refuse · a wrong driver is Stripe&apos;s to accept</span>
           </footer>
         </div>
         <div className={s.tear} aria-hidden="true" />

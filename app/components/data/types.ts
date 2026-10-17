@@ -56,7 +56,8 @@ export interface WorldEvent {
   text: string;
 }
 
-export type ReceiptKind = "hold" | "capture" | "released" | "refused" | "note";
+/** "wrong": a capture that took one driver's money for another driver's energy (v1). "stranded": a hold left blocked. */
+export type ReceiptKind = "hold" | "capture" | "wrong" | "stranded" | "released" | "refused" | "note";
 
 export interface ReceiptLine {
   id: string;
@@ -67,6 +68,11 @@ export interface ReceiptLine {
   payment_intent?: string;
   stripe_url?: string;
   text: string;
+  /** Whose hold this line is about. */
+  driver?: string | null;
+  /** Whose energy a capture billed (differs from `driver` on a wrong-driver capture). */
+  energy_driver?: string | null;
+  wrong_driver?: boolean | null;
 }
 
 export interface Intent {
