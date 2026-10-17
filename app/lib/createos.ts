@@ -32,6 +32,7 @@ export const WORLD_SANDBOX = {
   createsPer24h: 10,
 } as const;
 
+const ENSURE_BUDGET_MS = 150_000;
 const DEAD = new Set(["destroyed", "destroying", "failed", "error"]);
 
 export type WorldInfo = {
@@ -57,6 +58,7 @@ type Cache = { info: WorldInfo; at: number };
 const g = globalThis as unknown as {
   __onceWorldCache?: Cache;
   __onceWorldEnsure?: Promise<WorldInfo>;
+  __onceWorldEnsureAt?: number;
   __onceLastCreateAt?: number;
 };
 
@@ -150,20 +152,19 @@ async function startWorld(sb: Sandbox, bundle: { bytes: Buffer; sha: string }, a
   }
   // Stop any previous world, then start it in the background as a managed process
   // (managed processes survive pause/resume).
-  await sb.sh(`pkill -f "${d}/world.cjs" || true`, { timeoutMs: 20_000 });
+  // "[w]orld.cjs" so pkill does not match (and kill) the shell running it.
+  await sb.sh(`pkill -f "${d}/[w]orld.cjs" || true`, { timeoutMs: 20_000 });
+  // Env goes inline: processes.create only accepts env keys declared at sandbox creation.
+  const launch = `cd ${d} && PORT=${WORLD_SANDBOX.port} HOST=0.0.0.0 NODE_ENV=production exec node ${d}/world.cjs >> ${d}/world.log 2>&1`;
   try {
-    await sb.processes.create({
-      cmd: "node",
-      args: [`${d}/world.cjs`],
-      cwd: d,
-      env: { PORT: String(WORLD_SANDBOX.port), HOST: "0.0.0.0", NODE_ENV: "production" },
-    });
+    await sb.processes.create({ cmd: "sh", args: ["-c", launch], cwd: d });
   } catch (e) {
-    log("processes.create failed, falling back to nohup", describeCreateosError(e));
-    await sb.sh(
-      `cd ${d} && PORT=${WORLD_SANDBOX.port} HOST=0.0.0.0 nohup node ${d}/world.cjs > ${d}/world.log 2>&1 &`,
-      { timeoutMs: 20_000 },
-    );
+    // Fallback: a detached shell job. The exec agent may hold the call open until its
+    // timeout even with the job detached, so a timeout here is expected and ignored.
+    log("processes.create failed, falling back to a detached job", describeCreateosError(e));
+    await sb
+      .runCommand("sh", ["-c", `setsid sh -c '${launch}' < /dev/null > /dev/null 2>&1 &`], { timeoutMs: 10_000, retry: false })
+      .catch((err) => log("detached start returned", describeCreateosError(err)));
   }
   await sb.waitForPortReady(WORLD_SANDBOX.port, { timeoutMs: 30_000 });
   actions.push("started world on :8080");
@@ -201,6 +202,7 @@ async function doEnsure(opts: { redeploy?: boolean }): Promise<WorldInfo> {
         name: WORLD_SANDBOX.name,
         egress: [...WORLD_SANDBOX.egress], // in force before the first command
         ingress_enabled: true,
+        envs: { PORT: String(WORLD_SANDBOX.port), HOST: "0.0.0.0" },
         auto_pause_after_seconds: WORLD_SANDBOX.autoPauseSeconds,
       });
     } catch (e) {
@@ -283,15 +285,27 @@ async function doEnsure(opts: { redeploy?: boolean }): Promise<WorldInfo> {
 
 /** Ensure the world is up and return where it is. Single-flight: concurrent callers share one ensure. */
 export async function ensureWorld(opts: { redeploy?: boolean } = {}): Promise<WorldInfo> {
-  if (!g.__onceWorldEnsure) {
-    g.__onceWorldEnsure = doEnsure(opts)
+  // A stuck ensure must not wedge every later caller: share it for at most ENSURE_BUDGET_MS.
+  const stale = g.__onceWorldEnsureAt !== undefined && Date.now() - g.__onceWorldEnsureAt > ENSURE_BUDGET_MS;
+  if (!g.__onceWorldEnsure || stale) {
+    g.__onceWorldEnsureAt = Date.now();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const budget = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new HttpError(504, `world ensure exceeded ${ENSURE_BUDGET_MS / 1000} s`)), ENSURE_BUDGET_MS);
+    });
+    const p: Promise<WorldInfo> = Promise.race([doEnsure(opts), budget])
       .then((info) => {
         if (info.healthy) g.__onceWorldCache = { info, at: Date.now() };
         return info;
       })
       .finally(() => {
-        g.__onceWorldEnsure = undefined;
+        clearTimeout(timer);
+        if (g.__onceWorldEnsure === p) {
+          g.__onceWorldEnsure = undefined;
+          g.__onceWorldEnsureAt = undefined;
+        }
       });
+    g.__onceWorldEnsure = p;
   }
   return g.__onceWorldEnsure;
 }
