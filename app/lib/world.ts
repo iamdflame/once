@@ -4,19 +4,24 @@ import "server-only";
 import { ensureWorld, invalidateWorldCache, worldBaseUrl } from "./createos";
 import { env, HttpError } from "./env";
 
+/** A world intent (world/README.md "Intents"). `id` is the world's; `intent_id` is settle.js's own. */
 export type CaptureIntent = {
+  id: string;
   intent_id: string;
   episode_id: string;
   charger: string;
   payment_intent: string;
   amount_cents: number;
+  kind?: "capture" | "release";
+  status?: string;
+  settle_version?: number;
   [k: string]: unknown;
 };
 
 export type IntentResult = {
   ok: boolean;
-  status: string; // Stripe's PaymentIntent status, or "error"
-  error?: string | null; // Stripe's message, verbatim
+  status: string; // the PaymentIntent's status after the call, or "error"
+  error?: { message: string; code?: string | null; type?: string } | string | null; // Stripe's error, verbatim
   stripe_object?: unknown;
 };
 
@@ -27,11 +32,24 @@ export type ScenarioResult = {
   stranded: number;
   unbilled: number;
   overbilled?: number;
+  underbilled?: number;
+  invalid?: number;
   ok: boolean;
+  notes?: string[];
   [k: string]: unknown;
 };
 
-export type SuiteTotals = { double: number; stranded: number; unbilled: number; overbilled: number; ok: number; failed: number; count: number };
+export type SuiteTotals = {
+  double: number;
+  stranded: number;
+  unbilled: number;
+  overbilled: number;
+  underbilled: number;
+  invalid: number;
+  ok: number; // scenarios passed
+  failed: number;
+  count: number;
+};
 
 /** The suite report as the host returns it (matches the UI's SuiteReport; `raw` is the world's own JSON). */
 export type SuiteReport = {
@@ -39,6 +57,7 @@ export type SuiteReport = {
   ran_at: number;
   scenarios: ScenarioResult[];
   totals: SuiteTotals;
+  summary?: string;
   raw?: unknown;
 };
 
@@ -112,45 +131,68 @@ export const world = {
   cmd: (body: Record<string, unknown>) => worldFetch("/cmd", { body }),
   hold: (body: { charger: string; payment_intent: string; amount_cents: number }) => worldFetch("/hold", { body }),
 
+  /** Pending or in-flight intents (read-only view). */
   async pendingIntents(): Promise<CaptureIntent[]> {
-    return arr<CaptureIntent>(await worldFetch("/intents?pending=1"), "intents", "pending", "items");
+    return arr<CaptureIntent>(await worldFetch("/intents?pending=1"), "intents");
   },
-  async allIntents(): Promise<unknown[]> {
-    return arr(await worldFetch("/intents"), "intents", "items");
+  /** Atomically lease pending intents so overlapping ticks never execute one twice. */
+  async claimIntents(limit = 50, leaseMs = 20_000): Promise<CaptureIntent[]> {
+    return arr<CaptureIntent>(await worldFetch("/intents/claim", { body: { limit, lease_ms: leaseMs } }), "intents");
   },
-  reportResult: (intentId: string, result: IntentResult) =>
-    worldFetch(`/intents/${encodeURIComponent(intentId)}/result`, { body: result }),
+  /** The last 200 intents of any status, with the host's reported results. */
+  async allIntents(): Promise<CaptureIntent[]> {
+    return arr<CaptureIntent>(await worldFetch("/intents"), "intents");
+  },
+  /** `worldId` is the world's intent id (`in_00001`), not settle.js's intent_id. */
+  reportResult: (worldId: string, result: IntentResult) =>
+    worldFetch(`/intents/${encodeURIComponent(worldId)}/result`, { body: result }),
 
-  getSettle: () => worldFetch<{ source: string; version?: number | string; [k: string]: unknown }>("/settle"),
-  putSettle: (source: string) => worldFetch<{ ok?: boolean; version?: number | string; error?: string; [k: string]: unknown }>("/settle", { method: "PUT", text: source }),
+  getSettle: () => worldFetch<{ source: string; version?: number; name?: string; sha256?: string; [k: string]: unknown }>("/settle"),
+  putSettle: (source: string, name?: string) =>
+    worldFetch<{ ok?: boolean; version?: number; name?: string; sha256?: string; error?: string }>("/settle", {
+      method: "PUT",
+      body: { source, ...(name ? { name } : {}) },
+    }),
+  validateSettle: (source: string) => worldFetch<{ ok: boolean; error?: string | null; sha256?: string }>("/settle/validate", { body: { source } }),
 
-  async suite(body: { count?: number; seed?: number } = {}): Promise<SuiteReport> {
+  /** Run the seeded suite on the deployed settle.js, or dry-run `source` without deploying it. */
+  async suite(body: { count?: number; seed?: number; seeds?: number[]; source?: string } = {}): Promise<SuiteReport> {
     const raw = await worldFetch<unknown>("/suite", { body: { count: 30, ...body }, timeoutMs: 180_000 });
     return normalizeSuite(raw);
   },
+  /** One seed with the full event feed settle.js saw (the debugging view). */
+  trace: (seed: number, source?: string) => worldFetch<{ ok: boolean; report: Record<string, unknown> }>("/suite/trace", { body: { seed, ...(source ? { source } : {}) }, timeoutMs: 60_000 }),
+  lastSuite: () => worldFetch<{ ok: boolean; report: unknown }>("/suite/last"),
+  reset: (body: { settle?: "v1" } = {}) => worldFetch("/reset", { body }),
 };
 
 export function normalizeSuite(raw: unknown): SuiteReport {
-  const scenarios = arr<ScenarioResult>(raw, "scenarios", "results", "runs").map((s) => ({
+  const scenarios = arr<ScenarioResult>(raw, "scenarios").map((s) => ({
     ...s,
     double: Number(s.double ?? 0),
     stranded: Number(s.stranded ?? 0),
     unbilled: Number(s.unbilled ?? 0),
     overbilled: Number(s.overbilled ?? 0),
-    ok: s.ok ?? (!s.double && !s.stranded && !s.unbilled && !s.overbilled),
+    underbilled: Number(s.underbilled ?? 0),
+    invalid: Number(s.invalid ?? 0),
+    ok: s.ok ?? (!s.double && !s.stranded && !s.unbilled && !s.overbilled && !s.underbilled && !s.invalid),
   }));
-  const sum = (k: "double" | "stranded" | "unbilled" | "overbilled") => scenarios.reduce((a, s) => a + Number(s[k] ?? 0), 0);
+  const sum = (k: "double" | "stranded" | "unbilled" | "overbilled" | "underbilled" | "invalid") =>
+    scenarios.reduce((a, s) => a + Number(s[k] ?? 0), 0);
   const passed = scenarios.filter((s) => s.ok).length;
   const r = (raw ?? {}) as Record<string, unknown>;
   return {
-    version: (r.version ?? r.settle_version) as number | string | undefined,
+    version: (r.settle_version ?? r.version) as number | string | undefined,
     ran_at: Date.now(),
+    summary: typeof r.summary === "string" ? r.summary : undefined,
     scenarios,
     totals: {
       double: sum("double"),
       stranded: sum("stranded"),
       unbilled: sum("unbilled"),
       overbilled: sum("overbilled"),
+      underbilled: sum("underbilled"),
+      invalid: sum("invalid"),
       ok: passed,
       failed: scenarios.length - passed,
       count: scenarios.length,

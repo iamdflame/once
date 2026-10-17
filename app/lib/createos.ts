@@ -180,7 +180,9 @@ async function doEnsure(opts: { redeploy?: boolean }): Promise<WorldInfo> {
 
   const c = client();
   const actions: string[] = [];
-  let { box, createsUsed, others } = await findBox(c);
+  const found = await findBox(c);
+  const others = found.others;
+  let { box, createsUsed } = found;
 
   if (!box) {
     if (others.length > 0) {

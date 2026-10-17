@@ -35,8 +35,24 @@ export async function buildProof(opts: { verify?: boolean } = {}) {
   } catch {}
 
   const byId = new Map<string, CaptureRecord | Record<string, unknown>>();
-  for (const i of worldIntents) byId.set(String(i.intent_id), { ...i });
-  for (const r of host) byId.set(r.intent_id, { ...(byId.get(r.intent_id) ?? {}), ...r });
+  for (const i of worldIntents) {
+    // Only intents that reached the host (or should have): not rejected/suppressed ones.
+    if (i.status === "rejected" || i.status === "suppressed") continue;
+    const res = (i.result ?? null) as { ok?: boolean; status?: string; error?: unknown; stripe_object?: unknown } | null;
+    const err = res?.error;
+    byId.set(String(i.id), {
+      ...i,
+      world_status: i.status,
+      at: typeof i.created_at === "number" ? new Date(i.created_at).toISOString() : i.created_at,
+      action: i.kind === "release" ? "release" : "capture",
+      ok: res?.ok ?? false,
+      status: res?.status ?? i.status,
+      error: err == null ? null : typeof err === "string" ? err : ((err as { message?: string }).message ?? JSON.stringify(err)),
+      stripe_object: res?.stripe_object,
+      reported: !!res,
+    });
+  }
+  for (const r of host) byId.set(r.id, { ...(byId.get(r.id) ?? {}), ...r });
   const attempts = [...byId.values()] as Record<string, unknown>[];
 
   // Ask Stripe for the truth about each hold.
@@ -72,7 +88,7 @@ export async function buildProof(opts: { verify?: boolean } = {}) {
   // UI-shaped views (components/data/types.ts: Capture, SandboxInfo).
   const authorized = new Map(holds.map((h) => [String(h.payment_intent), Number(h.amount_authorized ?? 0)]));
   const captures = attempts
-    .filter((a) => a.action !== "rejected" && (a.status || a.error))
+    .filter((a) => a.action !== "rejected" && a.reported)
     .map((a) => ({
       payment_intent: String(a.payment_intent ?? ""),
       charger: String(a.charger ?? ""),

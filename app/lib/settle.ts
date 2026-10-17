@@ -4,11 +4,11 @@
 //
 // Safety under concurrent ticks:
 //  1. single-flight in this process: concurrent callers share the running tick;
-//  2. an intent stays "pending" in the world until its result is reported, so an
-//     intent is retried only if the report did not land;
-//  3. every Stripe call carries an idempotency key derived from (episode, intent), so a
-//     retry from this or any other host instance replays Stripe's stored answer instead
-//     of capturing again.
+//  2. intents are claimed with a lease (POST /intents/claim), so overlapping ticks from
+//     any number of host instances never execute the same intent twice; an intent whose
+//     report never landed becomes claimable again when the lease runs out;
+//  3. every Stripe call carries an idempotency key derived from (episode, hold, intent),
+//     so such a retry replays Stripe's stored answer instead of capturing again.
 import "server-only";
 import { capture, captureIdempotencyKey, stripe, dashboardUrl, type CaptureOutcome } from "./stripe";
 import { world, type CaptureIntent } from "./world";
@@ -16,7 +16,8 @@ import { describe } from "./errors";
 
 export type CaptureRecord = {
   at: string;
-  intent_id: string;
+  id: string; // the world's intent id (in_00001)
+  intent_id: string; // settle.js's own id
   episode_id: string;
   charger: string;
   payment_intent: string;
@@ -55,7 +56,7 @@ export function recentCaptures(limit = 100): CaptureRecord[] {
 
 function validate(i: CaptureIntent): string | null {
   if (!i || typeof i !== "object") return "intent is not an object";
-  if (!i.intent_id) return "intent has no intent_id";
+  if (!i.id) return "intent has no world id";
   if (!i.episode_id) return "intent has no episode_id";
   if (typeof i.payment_intent !== "string" || !i.payment_intent.startsWith("pi_")) return `payment_intent is not a Stripe PaymentIntent id: ${JSON.stringify(i.payment_intent)}`;
   if (!Number.isInteger(i.amount_cents) || i.amount_cents < 0) return `amount_cents must be a non-negative integer, got ${JSON.stringify(i.amount_cents)}`;
@@ -96,6 +97,7 @@ async function release(paymentIntent: string, idempotencyKey: string): Promise<C
 async function executeOne(i: CaptureIntent): Promise<CaptureRecord> {
   const rec: CaptureRecord = {
     at: new Date().toISOString(),
+    id: String(i?.id ?? ""),
     intent_id: String(i?.intent_id ?? ""),
     episode_id: String(i?.episode_id ?? ""),
     charger: String(i?.charger ?? ""),
@@ -115,10 +117,11 @@ async function executeOne(i: CaptureIntent): Promise<CaptureRecord> {
     rec.status = "rejected_by_host";
     rec.error = invalid;
   } else {
-    const key = captureIdempotencyKey(rec.episode_id, rec.intent_id);
+    const key = captureIdempotencyKey(rec.episode_id, rec.payment_intent, rec.id);
+    const isRelease = i.kind === "release" || rec.amount_cents === 0;
     try {
-      outcome = rec.amount_cents === 0 ? await release(rec.payment_intent, key) : await capture(rec.payment_intent, rec.amount_cents, key);
-      if (rec.amount_cents === 0) rec.action = "release";
+      outcome = isRelease ? await release(rec.payment_intent, key) : await capture(rec.payment_intent, rec.amount_cents, key);
+      if (isRelease) rec.action = "release";
       Object.assign(rec, {
         ok: outcome.ok,
         status: outcome.status,
@@ -130,22 +133,24 @@ async function executeOne(i: CaptureIntent): Promise<CaptureRecord> {
         stripe_object: outcome.stripe_object,
       });
     } catch (e) {
-      // Network failure talking to Stripe: do not report, so the intent stays pending and
-      // the next tick retries with the same idempotency key.
+      // Network failure talking to Stripe: do not report. The claim's lease runs out and
+      // a later tick retries with the same idempotency key.
       rec.error = `host could not reach Stripe: ${describe(e)}`;
       ledger().push(rec);
       return rec;
     }
   }
   try {
-    await world.reportResult(rec.intent_id, {
+    await world.reportResult(rec.id, {
       ok: rec.ok,
       status: rec.status,
-      error: rec.error,
+      error: rec.error === null ? null : { message: rec.error, code: rec.code ?? null },
       stripe_object: rec.stripe_object ?? null,
     });
     rec.reported = true;
   } catch (e) {
+    // 409: the world already settled this intent another way (rejected/suppressed).
+    if ((e as { status?: number })?.status === 409) rec.reported = true;
     rec.report_error = describe(e);
   }
   ledger().push(rec);
@@ -158,7 +163,7 @@ async function runTick(): Promise<TickResult> {
   const at = new Date().toISOString();
   let pending: CaptureIntent[];
   try {
-    pending = await world.pendingIntents();
+    pending = await world.claimIntents(50, 20_000);
   } catch (e) {
     return { at, pending: 0, processed: [], error: describe(e), ms: Date.now() - t0 };
   }

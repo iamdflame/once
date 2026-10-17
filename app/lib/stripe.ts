@@ -58,14 +58,16 @@ export async function createHoldCheckout(charger: string, origin: string) {
 }
 
 /**
- * The idempotency key for one capture intent: derived from the plug-in episode and the
- * intent. The host's own retries (concurrent ticks, a crash between capturing and
- * reporting) replay the same Stripe request and get Stripe's stored answer. A second,
- * distinct intent for the same episode (what naive settlement code emits) is a new
- * request, so Stripe itself judges it, and refuses it.
+ * The idempotency key for one capture intent: the world's intent id (unique per
+ * decision), labelled with the episode. The host's own retries (overlapping ticks, a
+ * lease that ran out, a crash between capturing and reporting) replay the same Stripe
+ * request and get Stripe's stored answer. A second, distinct decision for the same
+ * episode (what naive settlement code emits; v1 even reuses its episode_id under
+ * dup_stop) is a new request, so Stripe itself judges it, and refuses it. Keying on
+ * episode_id alone would make Stripe replay the first capture and hide that refusal.
  */
-export function captureIdempotencyKey(episodeId: string, intentId: string): string {
-  const h = createHash("sha256").update(`${episodeId}\u0000${intentId}`).digest("hex").slice(0, 32);
+export function captureIdempotencyKey(episodeId: string, paymentIntent: string, worldIntentId: string): string {
+  const h = createHash("sha256").update(`${paymentIntent}\u0000${worldIntentId}`).digest("hex").slice(0, 32);
   return `once-cap-${String(episodeId).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 60)}-${h}`;
 }
 
