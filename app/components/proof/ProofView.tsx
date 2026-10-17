@@ -66,16 +66,22 @@ export function ProofView() {
                 <tbody>
                   {proof.captures.map((c, i) => (
                     <tr key={`${c.payment_intent}-${c.idempotency_key}-${i}`} data-status={c.status}>
-                      <td>
+                      <td data-label="PaymentIntent">
                         <a href={c.url} target="_blank" rel="noreferrer" className={s.mono}>
                           {c.payment_intent}
                         </a>
                       </td>
-                      <td>{c.charger}</td>
-                      <td className={s.mono}>{c.episode_id || "—"}</td>
-                      <td className={`${s.num} num`}>{euro(c.authorized_cents)}</td>
-                      <td className={`${s.num} num`}>{c.status === "succeeded" ? euro(c.amount_cents) : c.status === "refused" ? `(${euro(c.amount_cents)})` : "—"}</td>
-                      <td>
+                      <td data-label="Charger">{c.charger}</td>
+                      <td data-label="Episode" className={s.mono}>
+                        {c.episode_id || "—"}
+                      </td>
+                      <td data-label="Authorised" className={`${s.num} num`}>
+                        {euro(c.authorized_cents)}
+                      </td>
+                      <td data-label="Captured" className={`${s.num} num`}>
+                        {c.status === "succeeded" ? euro(c.amount_cents) : c.status === "refused" ? `(${euro(c.amount_cents)})` : "—"}
+                      </td>
+                      <td data-label="Stripe says">
                         <span className={s.status} data-status={c.status}>
                           {c.status === "succeeded" ? "captured once" : c.status === "requires_capture" ? "uncaptured" : c.status === "canceled" ? "released" : "refused"}
                         </span>
@@ -111,15 +117,19 @@ export function ProofView() {
           <h2 className={s.cardTitle}>The world&apos;s sandbox</h2>
           <dl className={s.dl}>
             <dt>Provider</dt>
-            <dd>{sandbox.provider === "mock" ? "in-browser mock (stands in for CreateOS)" : "CreateOS sandbox via Stripe Projects"}</dd>
+            <dd>{sandbox.provider === "mock" ? "in-browser mock (stands in for CreateOS)" : sandbox.provider === "local" ? "a local world on the host machine (WORLD_URL, development only)" : "CreateOS sandbox via Stripe Projects"}</dd>
             <dt>Name</dt>
             <dd className={s.mono}>{sandbox.name}</dd>
             <dt>Root filesystem</dt>
             <dd className={s.mono}>{sandbox.rootfs}</dd>
             <dt>Egress allowlist</dt>
             <dd>
-              <span className={s.mono}>{sandbox.egress.join(", ") || "(empty = open)"}</span>
-              <small>A single sinkhole entry. Stripe, example.com and 1.1.1.1 are unreachable from inside: the world has no internet at all.</small>
+              <span className={s.mono}>{sandbox.egress.join(", ") || (sandbox.provider === "local" ? "not sandboxed" : "(empty = open)")}</span>
+              <small>
+                {sandbox.provider === "local"
+                  ? "In development the world runs on the host. Deployed, it runs in a CreateOS sandbox whose allowlist holds a single sinkhole entry."
+                  : "A single sinkhole entry. Stripe, example.com and 1.1.1.1 are unreachable from inside: the world has no internet at all."}
+              </small>
             </dd>
             <dt>Keys inside</dt>
             <dd>
@@ -142,7 +152,7 @@ export function ProofView() {
           <h2 className={s.cardTitle}>How to verify</h2>
           <ol className={s.steps}>
             <li>
-              <b>Stripe is the witness.</b> Open any PaymentIntent above in the dashboard (test mode) or run <code>stripe payment_intents retrieve pi_…</code>. One hold of €50.00, <code>amount_received</code> equal to the energy × €0.38/kWh, <code>amount_capturable</code> 0: the remainder was released.
+              <b>Stripe is the witness.</b> Open any PaymentIntent above in the dashboard (test mode) or run <code>stripe payment_intents retrieve pi_…</code>. One hold of €50.00, <code>amount_received</code> equal to the energy × the tariff (€0.60/kWh by default), <code>amount_capturable</code> 0: the remainder was released.
             </li>
             <li>
               <b>The duplicate.</b> On the board, with <em>Duplicate Stop</em> on: pay, cut the cable, unplug, restore. The wire log shows two StopTransaction messages 1.2 s apart; the ledger shows one capture.

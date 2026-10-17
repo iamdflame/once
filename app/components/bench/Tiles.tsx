@@ -20,7 +20,7 @@ export function Tiles({ tiles, count = 30, running }: { tiles: (Scenario | null)
               key={i}
               className={s.tile}
               data-state={state}
-              title={sc ? `seed ${sc.seed} · ${sc.faults.join(", ")} · double ${sc.double} · stranded ${sc.stranded} · unbilled ${sc.unbilled}` : `scenario ${i + 1}`}
+              title={sc ? `seed ${sc.seed}${sc.name ? ` ${sc.name}` : ""} · ${sc.faults.join(", ")} · double ${sc.double} · stranded ${sc.stranded} · unbilled ${sc.unbilled}${sc.notes?.[0] ? `\n${sc.notes[0]}` : ""}` : `scenario ${i + 1}`}
               aria-label={sc ? `Scenario ${i + 1}, seed ${sc.seed}, ${sc.ok ? "passed" : `failed: double ${sc.double}, stranded ${sc.stranded}, unbilled ${sc.unbilled}`}` : `Scenario ${i + 1}, not run`}
             >
               <span className={s.tileFace} aria-hidden="true">
@@ -62,8 +62,12 @@ function short(f: string): string {
     meter_reset: "mtr",
     meter_reset_on_reboot: "mtr",
     clock_skew: "clk",
+    skew: "clk",
     reorder: "ord",
     queue_offline: "q",
+    lose_ack: "ack",
+    over_hold: "ovr",
+    hold_while_queued: "b2b",
   };
   return map[f] ?? f.slice(0, 4);
 }

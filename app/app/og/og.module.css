@@ -1,0 +1,214 @@
+.canvas {
+  width: 1200px;
+  height: 630px;
+  display: grid;
+  grid-template-columns: 560px 1fr;
+  gap: 40px;
+  padding: 56px 64px;
+  overflow: hidden;
+  background: var(--concrete-deep);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.7' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.45 0 0 0 0 0.42 0 0 0 0 0.36 0 0 0 0.16 0'/></filter><rect width='240' height='240' filter='url(%23n)'/></svg>");
+}
+
+.left {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.brand {
+  font-weight: 700;
+  font-size: 22px;
+  letter-spacing: 0.2em;
+  color: var(--ink-soft);
+}
+
+.h1 {
+  margin-top: 18px;
+  font-size: 66px;
+  line-height: 0.98;
+  letter-spacing: -0.03em;
+  font-weight: 700;
+}
+
+.sub {
+  margin-top: 22px;
+  font-size: 24px;
+  line-height: 1.35;
+  color: var(--ink-soft);
+  max-width: 24ch;
+}
+
+.stack {
+  margin-top: 28px;
+  font-family: var(--font-code);
+  font-size: 15px;
+  color: var(--ink-mute);
+}
+
+.right {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 18px;
+  align-content: start;
+  padding-top: 70px;
+}
+
+.bay {
+  display: flex;
+  flex-direction: column;
+}
+
+.plate {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 14px 16px;
+  border-radius: 18px;
+  background:
+    linear-gradient(165deg, oklch(1 0 0 / 0.7), transparent 45%),
+    var(--enamel);
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.9),
+    inset 0 0 0 1px oklch(0.3 0.02 60 / 0.08),
+    var(--shadow-plate);
+}
+
+.top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.stencil {
+  font-weight: 700;
+  font-size: 19px;
+  letter-spacing: 0.18em;
+  color: oklch(0.36 0.02 60);
+  text-shadow: 0 1px 0 oklch(1 0 0 / 0.9);
+}
+
+.led {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: oklch(0.72 0.02 160);
+  box-shadow: inset 0 1px 1px oklch(1 0 0 / 0.6), 0 0 0 2px oklch(0.3 0.02 60 / 0.1);
+}
+
+.led[data-led="holding"] {
+  background: var(--hold-amber);
+  box-shadow: 0 0 10px 1px oklch(0.74 0.16 66 / 0.7);
+}
+
+.lcd {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 11px 8px;
+  border-radius: 8px;
+  background: linear-gradient(to bottom, oklch(0 0 0 / 0.35), transparent 30%), var(--lcd);
+  box-shadow: inset 0 2px 4px oklch(0 0 0 / 0.55), inset 0 0 0 1px oklch(0 0 0 / 0.4);
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.seg {
+  position: relative;
+  font-family: var(--font-seg);
+  font-weight: 700;
+  font-size: 26px;
+  white-space: pre;
+  letter-spacing: 0.04em;
+}
+
+.ghost {
+  color: var(--lcd-ghost);
+}
+
+.lit {
+  position: absolute;
+  inset: 0;
+  color: var(--segment-amber);
+  text-shadow: 0 0 6px var(--segment-amber-glow);
+}
+
+.unit {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: oklch(0.75 0.03 160);
+}
+
+.line {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid oklch(1 0 0 / 0.08);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: oklch(0.78 0.03 160);
+  white-space: nowrap;
+}
+
+.line[data-kind="captured"] {
+  color: oklch(0.8 0.15 145);
+}
+
+.line[data-kind="hold"] {
+  color: var(--segment-amber);
+}
+
+.cable {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 56px;
+}
+
+.cable span {
+  display: block;
+  width: 8px;
+  flex: 1;
+  background: linear-gradient(to right, oklch(0.3 0.01 240), oklch(0.42 0.01 240) 40%, oklch(0.26 0.01 240));
+}
+
+.cable i {
+  display: block;
+  width: 52px;
+  height: 16px;
+  margin: 4px 0;
+  border-radius: 3px;
+  background: repeating-linear-gradient(-45deg, var(--hazard-yellow) 0 7px, var(--hazard-black) 7px 14px);
+  box-shadow: 0 0 0 1.5px var(--hazard-black), 0 2px 6px oklch(0 0 0 / 0.3);
+}
+
+.rail {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 4px;
+  background: linear-gradient(to bottom, oklch(0.42 0.012 240), oklch(0.32 0.012 240));
+  box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.18), 0 6px 12px -6px oklch(0.2 0.02 240 / 0.6);
+  color: var(--ink-on-dark);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+
+.rail em {
+  font-style: normal;
+  font-family: var(--font-code);
+  font-weight: 400;
+  letter-spacing: 0;
+  font-size: 12px;
+  color: oklch(0.8 0.01 240);
+}

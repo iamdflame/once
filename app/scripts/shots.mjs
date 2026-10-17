@@ -52,11 +52,11 @@ try {
     for (const sc of screens) {
       if (sc.path) {
         const sep = sc.path.includes("?") ? "&" : "?";
-        await page.goto(`${base}${sc.path}${sep}mode=${mode}`, { waitUntil: "networkidle" });
+        await page.goto(`${base}${sc.path}${sep}mode=${mode}`, { waitUntil: "load" });
         await page.waitForTimeout(600);
       } else {
         await page.getByRole("link", { name: sc.link }).first().click();
-        await page.waitForLoadState("networkidle");
+        await page.waitForTimeout(1500);
         await page.evaluate(() => window.scrollTo(0, 0));
       }
       if (sc.prep === "demo" && mode === "mock") await playDemo(page);
@@ -85,7 +85,7 @@ async function playDemo(page) {
   await plate.click();
   await page.getByRole("button", { name: /Plug in and pay/ }).click();
   await page.getByRole("button", { name: /^Pay €50\.00$/ }).click();
-  await page.waitForTimeout(13000); // 22 kW at 300x: about 30 kWh by the unplug
+  await page.waitForTimeout(7800); // 22 kW at 300x and €0.60/kWh: about €11.40 by the unplug
   await page.getByRole("button", { name: /Cut cable/ }).click();
   await page.waitForTimeout(3400);
   await page.getByRole("button", { name: /^Unplug$/ }).click();

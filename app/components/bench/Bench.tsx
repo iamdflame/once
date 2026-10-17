@@ -12,7 +12,7 @@ type Run = "storm" | "fix" | null;
 
 interface Transcript {
   id: number;
-  kind: "status" | "thinking" | "error" | "done";
+  kind: "status" | "thinking" | "delta" | "error" | "done";
   text: string;
 }
 
@@ -56,6 +56,13 @@ export function Bench() {
           case "thinking":
             push("thinking", ev.text);
             break;
+          case "delta":
+            setLines((l) => {
+              const last = l[l.length - 1];
+              if (last && last.kind === "delta") return [...l.slice(0, -1), { ...last, text: (last.text + ev.text).slice(-1200) }];
+              return [...l.slice(-80), { id: ++seq.current, kind: "delta", text: ev.text }];
+            });
+            break;
           case "diff":
             setDiff({ old: ev.old, new: ev.new, version: ev.version });
             setStatus(`settle.js ${ev.version} written`);
@@ -73,14 +80,14 @@ export function Bench() {
           case "suite": {
             const ok = ev.report.totals.ok === ev.report.totals.count;
             setOutcome(ok ? "green" : "red");
-            const line = `settle.js ${ev.report.version} · ${ev.report.totals.ok}/${ev.report.totals.count} green · stranded ${ev.report.totals.stranded} · double ${ev.report.totals.double} · unbilled ${ev.report.totals.unbilled}`;
+            const line = `${ev.phase === "baseline" ? "baseline · " : ""}settle.js ${ev.report.version} · ${ev.report.totals.ok}/${ev.report.totals.count} green · stranded ${ev.report.totals.stranded} · double ${ev.report.totals.double} · unbilled ${ev.report.totals.unbilled}`;
             setStatus(line);
-            push(ok ? "done" : "status", line);
+            push(ok && ev.phase !== "baseline" ? "done" : "status", line);
             break;
           }
           case "done":
-            push("done", ev.ok ? `Deployed settle.js ${ev.version} after ${ev.attempts} attempt${ev.attempts === 1 ? "" : "s"}: every storm green.` : `Stopped after ${ev.attempts} attempts; the suite is still red.`);
-            setStatus(ev.ok ? `settle.js ${ev.version} deployed · exactly once, 30 of 30` : "The agent could not make every storm green.");
+            push(ev.ok ? "done" : "error", ev.reason ? ev.reason : ev.ok ? `Deployed settle.js ${ev.version} after ${ev.attempts} attempt${ev.attempts === 1 ? "" : "s"}: every storm green.` : `Stopped after ${ev.attempts} attempts; the suite is still red.`);
+            setStatus(ev.ok ? `settle.js ${ev.version} deployed · exactly once, 30 of 30` : ev.reason ?? "The agent could not make every storm green.");
             break;
           case "error":
             push("error", ev.text);
@@ -201,17 +208,24 @@ function RedList({ tiles }: { tiles: (Scenario | null)[] }) {
   if (red.length === 0) return null;
   return (
     <ul className={s.redList} aria-label="Failing scenarios">
-      {red.slice(0, 8).map((sc) => (
+      {red.slice(0, 5).map((sc) => (
         <li key={sc.seed}>
-          <b>seed {sc.seed}</b> {sc.faults.join(" → ")}
+          <b>
+            seed {sc.seed}
+            {sc.name ? ` ${sc.name}` : ""}
+          </b>{" "}
+          {sc.faults.join(", ")}
           <span>
-            {sc.double ? ` double ${sc.double}` : ""}
-            {sc.stranded ? ` stranded ${sc.stranded}` : ""}
-            {sc.unbilled ? ` unbilled ${sc.unbilled}` : ""}
+            {sc.double ? ` · double ${sc.double}` : ""}
+            {sc.stranded ? ` · stranded ${sc.stranded}` : ""}
+            {sc.unbilled ? ` · unbilled ${sc.unbilled}` : ""}
+            {sc.overbilled ? ` · overbilled ${sc.overbilled}` : ""}
+            {sc.underbilled ? ` · underbilled ${sc.underbilled}` : ""}
           </span>
+          {sc.notes && sc.notes.length ? <em>{sc.notes[0]}</em> : null}
         </li>
       ))}
-      {red.length > 8 ? <li className={s.redMore}>and {red.length - 8} more</li> : null}
+      {red.length > 5 ? <li className={s.redMore}>and {red.length - 5} more red</li> : null}
     </ul>
   );
 }

@@ -59,7 +59,16 @@ function initialMode(): { mode: Mode; source: Ctx["modeSource"] } {
 }
 
 export function WorldProvider({ children }: { children: React.ReactNode }) {
-  const [{ mode, source }, setModeState] = useState<{ mode: Mode; source: Ctx["modeSource"] }>(() => initialMode());
+  // The server and the first client render agree on "mock"; the real choice
+  // (URL, storage, env, probe) is applied right after mount, so hydration matches.
+  const [{ mode, source }, setModeState] = useState<{ mode: Mode; source: Ctx["modeSource"] }>({ mode: "mock", source: "env" });
+  const resolved = useRef(false);
+  useEffect(() => {
+    if (resolved.current) return;
+    resolved.current = true;
+    const m = initialMode();
+    setModeState(m);
+  }, []);
   const world = useMemo<WorldAdapter>(() => (mode === "live" ? getLive() : getMock()), [mode]);
   const probed = useRef(false);
   const subscribe = useCallback((fn: () => void) => world.subscribe(fn), [world]);

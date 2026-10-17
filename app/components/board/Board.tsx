@@ -119,7 +119,7 @@ export function Board() {
       <section className={`wrap ${s.bench}`}>
         <Controls charger={charger} busy={busy} notice={notice} onCmd={onCmd} onPay={onPay} />
         <Receipt lines={snap.receipt} mode={mode} />
-        <WireLog events={snap.events} filter={selected} />
+        <WireLog events={snap.events} filter={selected} worldTime={mode === "live"} />
       </section>
 
       {sheet ? (

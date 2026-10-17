@@ -24,7 +24,7 @@ import type {
 } from "./types";
 import { ledFor, stripeUrl } from "./types";
 
-const TARIFF = 38; // cents per kWh
+const TARIFF = 60; // cents per kWh (the world's default)
 const HOLD = 5000; // €50.00
 const COMPRESSION = 300; // simulated seconds per real second (the world's LiveClock default)
 const TICK_MS = 250;
@@ -105,43 +105,81 @@ const defaultQuirks = (): Record<Quirk, boolean> => ({
   meter_reset_on_reboot: false,
 });
 
-const FAULT_POOL = [
-  "cut",
-  "unplug_offline",
-  "restore",
-  "dup_stop",
-  "reboot_restart",
-  "stop_without_start",
-  "meter_reset",
-  "clock_skew",
-  "reorder",
+const ARCHETYPES: { name: string; faults: string[] }[] = [
+  { name: "cut-unplug-restore", faults: ["cut", "unplug_offline", "restore"] },
+  { name: "dup-stop", faults: ["cut", "unplug_offline", "restore", "dup_stop"] },
+  { name: "reboot-restart", faults: ["reboot_restart"] },
+  { name: "reboot-meter-reset", faults: ["reboot_restart", "meter_reset_on_reboot", "cut", "dup_stop"] },
+  { name: "stop-without-start", faults: ["stop_without_start", "cut"] },
+  { name: "start-lost-offline", faults: ["stop_without_start", "dup_stop", "unplug_offline"] },
+  { name: "clock-skew", faults: ["skew", "unplug_offline"] },
+  { name: "reboot-while-offline", faults: ["cut", "reboot_restart", "unplug_offline", "restore", "dup_stop"] },
+  { name: "back-to-back-offline", faults: ["cut", "unplug_offline", "hold_while_queued", "restore"] },
+  { name: "storm", faults: ["cut", "reboot_restart", "dup_stop", "lose_ack", "over_hold"] },
 ];
 
-/** Deterministic scenario outcomes for a given settle version. */
-export function mockScenarios(version: "v1" | "v2", count = 30, seedBase = 7): Scenario[] {
+/**
+ * Deterministic scenario outcomes for a given settle version, shaped like the
+ * world's runner: seed % 10 picks the archetype; v1-naive ends 4/30 ok with
+ * double 43, the episode ledger 30/30.
+ */
+export function mockScenarios(version: "v1" | "v2", count = 30, seedBase = 1): Scenario[] {
   const out: Scenario[] = [];
   for (let i = 0; i < count; i++) {
-    const seed = seedBase * 1000 + i;
-    const rnd = mulberry32(seed);
-    const n = 2 + Math.floor(rnd() * 3);
-    const faults: string[] = [];
-    while (faults.length < n) {
-      const f = FAULT_POOL[Math.floor(rnd() * FAULT_POOL.length)];
-      if (!faults.includes(f)) faults.push(f);
-    }
+    const seed = seedBase + i;
+    const a = ARCHETYPES[seed % 10];
+    const rnd = mulberry32(seed * 7919);
+    const charger = `CP${String(1 + Math.floor(rnd() * 12)).padStart(2, "0")}`;
+    const wh = 4000 + Math.floor(rnd() * 26000);
+    const expected = Math.min(5000, Math.round((wh * TARIFF) / 1000));
     let double = 0;
     let stranded = 0;
     let unbilled = 0;
     let overbilled = 0;
+    let underbilled = 0;
+    const notes: string[] = [];
     if (version === "v1") {
-      if (faults.includes("reboot_restart")) double += 1;
-      if (faults.includes("stop_without_start")) {
-        unbilled += 1;
-        stranded += 1;
+      const arche = seed % 10;
+      const split = a.faults.includes("reboot_restart");
+      const lostStart = a.faults.includes("stop_without_start");
+      if (split) {
+        const n = arche === 9 ? 3 + Math.floor(rnd() * 3) : arche === 7 ? 2 : 1 + Math.floor(rnd() * 2);
+        double += n;
+        underbilled += 1;
+        const first = Math.round(expected * (0.25 + rnd() * 0.4));
+        notes.push(
+          `${charger}-E1 pi_sim_${seed}_1 expected €${(expected / 100).toFixed(2)} for ${wh} Wh over ${n + 1} OCPP transaction(s): ${n + 1} settlement intents for one hold; underbilled: captured €${(first / 100).toFixed(2)}. Intents: capture €${(first / 100).toFixed(2)} [tx-1001] ok; capture €${((expected - first) / 100).toFixed(2)} [tx-1002] refused: This PaymentIntent could not be captured: the remainder of the authorized amount has been released.`,
+        );
       }
-      if (faults.includes("meter_reset") && faults.includes("reboot_restart")) overbilled += 1;
+      if (lostStart) {
+        if (arche === 5 || rnd() < 0.5) {
+          stranded += 1;
+          unbilled += 1;
+          notes.push(`${charger}-E1 pi_sim_${seed}_1 expected €${(expected / 100).toFixed(2)} for ${wh} Wh: no settlement intent (StopTransaction for transactionId 7000001 the CSMS never issued); the hold is still requires_capture.`);
+        } else {
+          overbilled += 1;
+          notes.push(`${charger}-E1 pi_sim_${seed}_1 expected €${(expected / 100).toFixed(2)}: captured €50.00 (meterStart unknown, billed from 0).`);
+        }
+      }
+      if (arche === 3) {
+        overbilled += 1;
+        notes.push(`${charger}-E1 meter reset to 0 after the reboot: the second transaction's meterStop was billed as if the register had never reset.`);
+      }
+      if (arche === 8) {
+        double += 1;
+        notes.push(`${charger}-E2 pi_sim_${seed}_2 (driver B) was charged for driver A's queued StopTransaction, then again for its own.`);
+      }
+      if (arche === 1 && seed > 10) {
+        double += 1;
+        notes.push(`${charger}: a second session on the same charger reused the hold; two intents for one PaymentIntent.`);
+      }
+      if (arche === 6 && seed > 6) {
+        underbilled += 1;
+        notes.push(`${charger}-E1 timestamps 26 h behind: the energy window was cut at the skewed Stop timestamp.`);
+      }
     }
-    out.push({ seed, faults, double, stranded, unbilled, overbilled, ok: double + stranded + unbilled + overbilled === 0 });
+    const ok = double + stranded + unbilled + overbilled + underbilled === 0;
+    out.push({ seed, name: a.name, faults: a.faults, chargers: [charger], double, stranded, unbilled, overbilled, underbilled, ok, notes });
   }
   return out;
 }
@@ -170,7 +208,7 @@ function settlerV1(tariff: number): Settler {
         const wh = Math.max(0, (p.meterStop ?? 0) - start.meterStart);
         const amount = Math.round((wh / 1000) * tariff);
         out.push({
-          intent_id: "cap_" + p.transactionId,
+          intent_id: "stop-" + p.transactionId,
           episode_id: "tx-" + p.transactionId,
           charger: evt.charger,
           payment_intent: hold.payment_intent!,
@@ -200,7 +238,7 @@ function settlerV2(tariff: number): Settler {
     ep.closed = true;
     const amount = Math.round((energy(ep) / 1000) * tariff);
     out.push({
-      intent_id: "cap_" + ep.id,
+      intent_id: "episode-" + ep.id,
       episode_id: ep.id,
       charger,
       payment_intent: ep.payment_intent,
@@ -267,8 +305,9 @@ export class MockWorld implements WorldAdapter {
   private listeners = new Set<(s: Snapshot) => void>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private pending: ReturnType<typeof setTimeout>[] = [];
-  private nextTx = 1041;
-  private episodeN = 0;
+  private nextTx = 1001;
+  private episodeN: Record<string, number> = {};
+  private intentN = 0;
   private seq = 0;
   private suiteRuns = 0;
   private snap: Snapshot | null = null;
@@ -308,7 +347,7 @@ export class MockWorld implements WorldAdapter {
     }
     const down = this.chargers.get("CP09")!;
     down.link = "cut";
-    this.log(null, "world", "World booted · 12 chargers · CSMS ws://csms:9000 · tariff €0.38/kWh", undefined, true);
+    this.log(null, "world", "World booted · 12 chargers · CSMS ws://csms:9000 · tariff €0.60/kWh", undefined, true);
     this.log("CP09", "link", "link down since boot (proxy refusing sockets)", undefined, true);
     for (const id of ["CP02", "CP05", "CP11"]) {
       const c = this.chargers.get(id)!;
@@ -338,8 +377,9 @@ export class MockWorld implements WorldAdapter {
     this.settle = { version: "v1", source: SETTLE_V1, author: "shipped", loaded_at: Date.now() };
     this.settler = settlerV1(TARIFF);
     this.suite = null;
-    this.nextTx = 1041;
-    this.episodeN = 0;
+    this.nextTx = 1001;
+    this.episodeN = {};
+    this.intentN = 0;
     this.seed();
     this.start();
     this.emit();
@@ -487,7 +527,7 @@ export class MockWorld implements WorldAdapter {
   private collectIntents() {
     for (const i of this.settler.intents()) {
       if (this.intents.some((x) => x.intent_id === i.intent_id)) continue;
-      this.intents.push({ ...i });
+      this.intents.push({ ...i, id: `in_${String(++this.intentN).padStart(5, "0")}`, kind: "capture", created_at: Date.now() });
       this.log(i.charger, "settle", `settle.js ${this.settle.version} → capture intent ${i.intent_id} · ${i.episode_id} · €${(i.amount_cents / 100).toFixed(2)}`, "out", true);
     }
   }
@@ -571,12 +611,6 @@ export class MockWorld implements WorldAdapter {
       this.send(c, { action: "StopTransaction", payload: { transactionId: tx.id, meterStop: c.meterWh, reason: "EVDisconnected" } });
     }
     this.send(c, { action: "StatusNotification", payload: { status: "Available" } });
-    if (c.episode && c.link === "up") this.later(300, () => this.closeEpisodeIfSettled(c));
-  }
-
-  private closeEpisodeIfSettled(c: MockCharger) {
-    // Nothing to do here; the episode stays visible on the LCD until the next plug.
-    this.emit();
   }
 
   private reboot(c: MockCharger) {
@@ -632,7 +666,7 @@ export class MockWorld implements WorldAdapter {
   }
 
   private bindHold(c: MockCharger, pi: string, session: string) {
-    const episode_id = `ep_${c.id}_${String(++this.episodeN).padStart(3, "0")}`;
+    const episode_id = `${c.id}-E${(this.episodeN[c.id] = (this.episodeN[c.id] ?? 0) + 1)}`;
     c.hold = { payment_intent: pi, checkout_session: session, amount_cents: HOLD, status: "uncaptured", episode_id };
     c.episode = null;
     this.log(c.id, "world", `POST /hold · ${pi} bound to the next episode on ${c.id} (${episode_id})`, "in", true);
@@ -665,7 +699,7 @@ export class MockWorld implements WorldAdapter {
           c.hold.status = "captured";
           c.hold.captured_cents = intent.amount_cents;
         }
-        this.log(intent.charger, "stripe", `capture ${pi.id} amount_to_capture=${intent.amount_cents} idempotency_key=${intent.intent_id} → succeeded`, "in", true);
+        this.log(intent.charger, "stripe", `capture ${pi.id} amount_to_capture=${intent.amount_cents} idempotency_key=once-cap-${intent.episode_id}-… → succeeded`, "in", true);
         this.print({
           kind: "capture",
           charger: intent.charger,
@@ -684,7 +718,7 @@ export class MockWorld implements WorldAdapter {
           text: `RELEASED €${((pi.amount - intent.amount_cents) / 100).toFixed(2)}`,
         });
       } else {
-        const msg = `This PaymentIntent could not be captured because it has already been captured for €${((pi.captured ?? 0) / 100).toFixed(2)}; the remainder of the authorized amount has been released.`;
+        const msg = "This PaymentIntent could not be captured: the remainder of the authorized amount has been released.";
         intent.result = { ok: false, status: "refused", error: msg, stripe_object: pi.id };
         this.log(intent.charger, "stripe", `capture ${pi.id} amount_to_capture=${intent.amount_cents} → 400 invalid_request_error: ${msg}`, "in", true);
         this.print({
@@ -718,16 +752,18 @@ export class MockWorld implements WorldAdapter {
   async *runSuite(): AsyncIterable<AgentEvent> {
     const version = this.settle.version as "v1" | "v2";
     yield { type: "status", text: `Running 30 seeded storms against settle.js ${version} inside the sandbox` };
-    const scenarios = mockScenarios(version, 30, 7 + this.suiteRuns);
+    const scenarios = mockScenarios(version, 30, 1);
     this.suiteRuns++;
     for (let i = 0; i < scenarios.length; i++) {
       await sleep(85);
       yield { type: "scenario", scenario: scenarios[i], index: i, count: scenarios.length };
     }
-    const report: SuiteReport = { version, ran_at: Date.now(), scenarios, totals: totals(scenarios) };
+    const t = totals(scenarios);
+    const summary = `${t.ok}/30 ok · double ${t.double} · stranded ${t.stranded} · unbilled ${t.unbilled} · overbilled ${t.overbilled}`;
+    const report: SuiteReport = { version, ran_at: Date.now(), summary, scenarios, totals: t };
     this.suite = report;
-    this.log(null, "world", `POST /suite · ${version} · ok ${report.totals.ok}/30 · stranded ${report.totals.stranded} · double ${report.totals.double} · unbilled ${report.totals.unbilled}`);
-    yield { type: "suite", report };
+    this.log(null, "world", `POST /suite · ${version} · ${summary}`);
+    yield { type: "suite", report, phase: "attempt" };
   }
 
   async *fix(): AsyncIterable<AgentEvent> {
@@ -746,7 +782,7 @@ export class MockWorld implements WorldAdapter {
     yield { type: "status", text: `Reading settle.js ${this.settle.version} · ${this.settle.source.split("\n").length} lines · and the world's settle interface` };
     await sleep(500);
     const thoughts = [
-      "Every red scenario contains reboot_restart or stop_without_start. v1 keys the ledger by transactionId, so a reboot that splits one plug-in into two transactions produces two capture intents against one PaymentIntent.",
+      "26 of 30 scenarios are red and 43 of the failures are doubles. v1 keys the ledger by transactionId, so a reboot that splits one plug-in into two transactions produces two capture intents against one PaymentIntent; a lost StartTransaction leaves the hold stranded.",
       "Stripe allows one capture per authorization; the second attempt is refused and the money for the second half is lost, or the hold strands when the Start was never seen.",
       "The unit of money is the plug-in episode, not the OCPP transaction. Key the ledger by the episode bound at /hold; accumulate energy across transactions; dedupe Stops by (charger, transactionId, meterStop); keep MeterValues as a monotone lower bound so a lost Start still bills.",
       "Close the episode once: on a Stop whose reason is not PowerLoss or Reboot, or when the connector returns to Available with no live transaction. Amount = energy × tariff, capped at the hold. The intent id is the episode id, so the host's idempotency key is stable.",
@@ -765,7 +801,7 @@ export class MockWorld implements WorldAdapter {
     await sleep(400);
     for await (const e of this.runSuite()) yield e;
     const ok = this.suite?.totals.ok === 30;
-    yield { type: "done", ok, version: "v2", attempts: 1 };
+    yield { type: "done", ok, version: "v2", attempts: 1, reason: ok ? `attempt 1 passes all 30 scenarios; deployed as v2 (${this.suite?.summary ?? ""})` : "attempt 1 is still red" };
     this.emit();
   }
 

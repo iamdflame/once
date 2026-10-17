@@ -70,27 +70,37 @@ export interface ReceiptLine {
 }
 
 export interface Intent {
+  /** The world's own id (in_00001) when there is one. */
+  id?: string;
   intent_id: string;
   episode_id: string;
   charger: string;
   payment_intent: string;
   amount_cents: number;
+  kind?: "capture" | "release";
+  created_at?: number;
   result?: { ok: boolean; status: string; error?: string; stripe_object?: string };
 }
 
 export interface Scenario {
   seed: number;
+  name?: string;
   faults: string[];
+  chargers?: string[];
   double: number;
   stranded: number;
   unbilled: number;
   overbilled: number;
+  underbilled?: number;
   ok: boolean;
+  /** The world's plain-English account of what went wrong. */
+  notes?: string[];
 }
 
 export interface SuiteReport {
   version: string;
   ran_at: number;
+  summary?: string;
   scenarios: Scenario[];
   totals: { stranded: number; double: number; unbilled: number; overbilled: number; ok: number; count: number };
 }
@@ -107,11 +117,13 @@ export type AgentEvent =
   | { type: "attempt"; n: number; of: number }
   | { type: "model"; name: string; provider: string }
   | { type: "thinking"; text: string }
+  /** A chunk of the model's streamed output. */
+  | { type: "delta"; text: string }
   | { type: "diff"; old: string; new: string; version: string }
   | { type: "uploaded"; version: string }
   | { type: "scenario"; scenario: Scenario; index: number; count: number }
-  | { type: "suite"; report: SuiteReport }
-  | { type: "done"; ok: boolean; version: string; attempts: number }
+  | { type: "suite"; report: SuiteReport; phase?: "baseline" | "attempt" | "deployed" }
+  | { type: "done"; ok: boolean; version: string; attempts: number; reason?: string }
   | { type: "error"; text: string };
 
 export interface Capture {
@@ -128,7 +140,7 @@ export interface Capture {
 }
 
 export interface SandboxInfo {
-  provider: "CreateOS" | "mock";
+  provider: "CreateOS" | "mock" | "local";
   name: string;
   rootfs: string;
   egress: string[];
@@ -143,6 +155,22 @@ export interface Proof {
   suite: SuiteReport | null;
   sandbox: SandboxInfo;
   settle: Settle | null;
+  /** Each hold as Stripe itself reports it (live mode). */
+  holds?: StripeHold[];
+}
+
+export interface StripeHold {
+  payment_intent: string;
+  status: string;
+  amount_authorized: number;
+  amount_received: number;
+  amount_capturable: number;
+  charger?: string;
+  dashboard_url: string;
+  capture_attempts: number;
+  captures_succeeded: number;
+  refusals: string[];
+  error?: string;
 }
 
 export interface Snapshot {

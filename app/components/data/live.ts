@@ -1,7 +1,7 @@
 // The live adapter: the host API routes (app/app/api/**) in front of the
-// CreateOS sandbox and Stripe. The world's JSON is normalised here into the
-// shapes in types.ts, tolerantly, so a renamed field degrades to a blank
-// instead of a crash.
+// CreateOS sandbox and Stripe. Shapes follow world/README.md (GET /state,
+// /intents, /suite, /events) and app/lib (proof, agent events). Field access
+// stays tolerant so a renamed field degrades to a blank, not a crash.
 
 import type { WorldAdapter } from "./adapter";
 import { totals } from "./adapter";
@@ -18,29 +18,29 @@ import type {
   Scenario,
   Settle,
   Snapshot,
+  StripeHold,
   SuiteReport,
   WorldEvent,
 } from "./types";
 import { QUIRKS, euro, ledFor, stripeUrl } from "./types";
 
 type J = Record<string, unknown>;
-const obj = (x: unknown): J => (x && typeof x === "object" ? (x as J) : {});
+const obj = (x: unknown): J => (x && typeof x === "object" && !Array.isArray(x) ? (x as J) : {});
 const str = (x: unknown, d = ""): string => (x == null ? d : String(x));
 const num = (x: unknown, d = 0): number => {
   const n = Number(x);
   return Number.isFinite(n) ? n : d;
 };
-const arr = (x: unknown, ...keys: string[]): unknown[] => {
-  if (Array.isArray(x)) return x;
-  const o = obj(x);
-  for (const k of keys) if (Array.isArray(o[k])) return o[k] as unknown[];
-  if (keys.length === 0 && x && typeof x === "object") return Object.values(o);
-  return [];
-};
+const arr = (x: unknown): unknown[] => (Array.isArray(x) ? x : []);
 const when = (x: unknown): number => {
   if (typeof x === "number") return x > 1e12 ? x : x * 1000;
   const t = Date.parse(str(x));
-  return Number.isFinite(t) ? t : Date.now();
+  return Number.isFinite(t) ? t : 0;
+};
+const vtag = (v: unknown, d = "v1"): string => {
+  const s = str(v);
+  if (!s) return d;
+  return /^\d+$/.test(s) ? `v${s}` : s;
 };
 
 async function api<T = unknown>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
@@ -74,176 +74,261 @@ function normQuirks(raw: unknown): Record<Quirk, boolean> {
   return out;
 }
 
-function normHold(raw: unknown, intents: Intent[]): Hold | null {
+/** A world hold (GET /state .holds[]) → the UI's Hold. */
+function normHold(raw: unknown): Hold | null {
   const h = obj(raw);
-  const pi = str(h.payment_intent ?? h.paymentIntent ?? h.pi);
+  const pi = str(h.payment_intent);
   if (!pi) return null;
-  const mine = intents.filter((i) => i.payment_intent === pi && i.result);
-  const captured = mine.find((i) => i.result?.ok);
-  const refused = mine.find((i) => i.result && !i.result.ok);
-  let status: Hold["status"] = "uncaptured";
   const s = str(h.status).toLowerCase();
-  if (captured || s === "captured" || s === "succeeded") status = "captured";
-  else if (s === "released" || s === "canceled") status = "released";
-  else if (refused && !captured) status = "refused";
+  const results = arr(h.results).map(obj);
+  const captured = results.find((r) => r.ok && str(r.kind, "capture") === "capture");
+  const refused = results.find((r) => !r.ok);
+  let status: Hold["status"] = "uncaptured";
+  if (s === "succeeded" || captured) status = "captured";
+  else if (s === "canceled") status = "released";
+  else if (refused) status = "refused";
   return {
     payment_intent: pi,
-    checkout_session: str(h.checkout_session ?? h.session) || undefined,
-    amount_cents: num(h.amount_cents ?? h.amount, 5000),
-    captured_cents: captured?.amount_cents ?? (h.captured_cents != null ? num(h.captured_cents) : undefined),
+    amount_cents: num(h.amount_cents, 5000),
+    captured_cents: num(h.amount_captured, captured ? num(captured.amount_cents) : 0) || undefined,
     status,
-    episode_id: str(h.episode_id ?? h.episode) || undefined,
+    episode_id: str(h.episode_id) || undefined,
   };
 }
 
-function normCharger(raw: unknown, holds: unknown[], episodes: unknown[], intents: Intent[], tariff: number): Charger {
+function normCharger(raw: unknown, holds: J[], tariff: number): Charger {
   const c = obj(raw);
-  const id = str(c.id ?? c.charger ?? c.name);
-  const linkRaw = str(c.link ?? obj(c.proxy).state ?? (c.connected === false ? "cut" : c.online === false ? "cut" : "up")).toLowerCase();
-  const link: Charger["link"] = /cut|down|off|closed|false/.test(linkRaw) ? "cut" : /reboot|boot/.test(linkRaw) ? "rebooting" : "up";
-  const holdRaw = c.hold ?? holds.find((h) => str(obj(h).charger) === id);
-  const episode = obj(c.episode ?? episodes.find((e) => str(obj(e).charger) === id && !obj(e).ended_at && !obj(e).closed));
-  const hold = normHold(holdRaw ?? episode.hold, intents);
-  const wh = num(c.episode_wh ?? episode.wh ?? episode.energy_wh ?? c.session_wh ?? c.wh ?? (c.kwh != null ? num(c.kwh) * 1000 : undefined), 0);
+  const id = str(c.id);
+  const status = str(c.status);
+  const link: Charger["link"] = str(c.link) === "cut" ? "cut" : c.power === false || status === "Unavailable" ? "rebooting" : "up";
+  const ep = obj(c.episode);
+  const tx = obj(c.transaction);
+  const mine = holds.filter((h) => str(h.charger) === id);
+  // The hold of the current episode, else the one waiting for the next plug-in, else the last settled one.
+  const holdRaw =
+    (ep.id ? mine.find((h) => str(h.episode_id) === str(ep.id)) : undefined) ??
+    (c.next_hold ? obj(c.next_hold) : undefined) ??
+    mine.find((h) => str(h.status) === "requires_capture") ??
+    mine[mine.length - 1];
+  const hold = normHold(holdRaw);
+  const wh = num(ep.energy_wh, num(tx.energy_wh, 0));
   const kwh = wh / 1000;
-  const cents = Math.round(kwh * tariff);
-  const plugged = Boolean(c.plugged ?? c.ev_connected ?? episode.id ?? (str(c.connector_status ?? c.status).toLowerCase() === "charging"));
+  const cents = ep.cost_cents != null ? num(ep.cost_cents) : Math.round(kwh * tariff);
   const base = {
     id,
-    kw: num(c.kw ?? c.power_kw ?? c.max_kw, 11),
+    kw: num(obj(c.car).power_kw, 11),
     link,
-    plugged,
+    plugged: Boolean(c.plugged),
     kwh,
     cents: hold ? Math.min(cents, hold.amount_cents) : cents,
-    transaction_id: c.transaction_id != null ? num(c.transaction_id) : c.transactionId != null ? num(c.transactionId) : null,
+    transaction_id: tx.transaction_id != null ? num(tx.transaction_id) : null,
     hold,
     quirks: normQuirks(c.quirks),
-    queued: num(c.queued ?? c.queue_length ?? arr(c.queue).length, 0),
+    queued: num(c.queue_len, arr(c.queue).length),
   };
   return { ...base, status: ledFor(base) };
 }
 
 function normIntent(raw: unknown): Intent {
   const i = obj(raw);
-  const r = i.result != null ? obj(i.result) : i.status != null && i.status !== "pending" ? i : null;
+  const r = i.result != null ? obj(i.result) : null;
+  const err = r?.error;
   return {
+    id: str(i.id) || undefined,
     intent_id: str(i.intent_id ?? i.id),
     episode_id: str(i.episode_id),
     charger: str(i.charger),
     payment_intent: str(i.payment_intent),
     amount_cents: num(i.amount_cents),
+    kind: str(i.kind) === "release" ? "release" : "capture",
+    created_at: when(i.created_at),
     result: r
       ? {
-          ok: Boolean(r.ok ?? str(r.status) === "succeeded"),
+          ok: Boolean(r.ok),
           status: str(r.status, "error"),
-          error: r.error == null ? undefined : str(r.error),
+          error: err == null ? undefined : typeof err === "string" ? err : str(obj(err).message ?? JSON.stringify(err)),
           stripe_object: typeof r.stripe_object === "string" ? r.stripe_object : str(obj(r.stripe_object).id) || undefined,
         }
       : undefined,
   };
 }
 
-function normEvent(raw: unknown, i: number): WorldEvent {
+const compact = (v: unknown): string => {
+  if (v == null) return "";
+  if (typeof v !== "object") return String(v);
+  return JSON.stringify(v).replace(/"([A-Za-z_]+)":/g, "$1:").slice(0, 160);
+};
+
+function energyOf(payload: J): string {
+  const mv = arr(payload.meterValue)[0];
+  const sv = arr(obj(mv).sampledValue).map(obj).find((s) => !s.measurand || s.measurand === "Energy.Active.Import.Register");
+  return sv ? `${str(sv.value)} Wh` : "";
+}
+
+/** One world event (GET /events) → a wire-log line. Returns null for lines not worth showing. */
+function normEvent(raw: unknown): WorldEvent | null {
   const e = obj(raw);
-  const kindRaw = str(e.kind ?? e.type ?? "world").toLowerCase();
-  const kind: WorldEvent["kind"] = /ocpp|msg|message/.test(kindRaw)
-    ? "ocpp"
-    : /link|proxy|net/.test(kindRaw)
-      ? "link"
-      : /cmd|command/.test(kindRaw)
-        ? "cmd"
-        : /settle|intent/.test(kindRaw)
-          ? "settle"
-          : /stripe|capture|hold/.test(kindRaw)
-            ? "stripe"
-            : "world";
-  let text = str(e.text ?? e.message ?? e.summary);
-  if (!text) {
-    const action = str(e.action);
-    const payload = e.payload ?? e.body;
-    text = action ? `${action} ${payload !== undefined ? JSON.stringify(payload) : ""}`.trim() : JSON.stringify(e).slice(0, 200);
+  const type = str(e.type);
+  const charger = e.charger == null ? null : str(e.charger);
+  const base = { id: `s${str(e.seq)}`, t: when(e.at), charger };
+  switch (type) {
+    case "tick":
+    case "settler_log":
+      return null;
+    case "ocpp": {
+      const action = str(e.action);
+      const p = obj(e.payload);
+      const r = obj(e.response);
+      if (action === "Heartbeat") return null;
+      let text = `${action} ${compact(p)}`;
+      if (action === "StartTransaction") text = `StartTransaction {idTag:"${str(p.idTag)}", meterStart:${str(p.meterStart)}} → {transactionId:${str(r.transactionId)}, ${str(obj(r.idTagInfo).status, "Accepted")}}`;
+      if (action === "StopTransaction") text = `StopTransaction {transactionId:${str(p.transactionId)}, meterStop:${str(p.meterStop)}, reason:"${str(p.reason)}"}`;
+      if (action === "MeterValues") text = `MeterValues {transactionId:${str(p.transactionId)}, Energy.Active.Import.Register:${energyOf(p)}}`;
+      if (action === "StatusNotification") text = `StatusNotification {connectorId:${str(p.connectorId)}, status:"${str(p.status)}"}`;
+      if (action === "BootNotification") text = `BootNotification {model:"${str(p.chargePointModel)}", firmware:"${str(p.firmwareVersion)}"} → {${str(r.status, "Accepted")}}`;
+      if (action === "Authorize") text = `Authorize {idTag:"${str(p.idTag)}"} → ${str(obj(r.idTagInfo).status, "Accepted")}`;
+      return { ...base, kind: "ocpp", dir: "in", text };
+    }
+    case "link":
+      return { ...base, kind: "link", text: `socket ${str(e.state)} at the CSMS` };
+    case "hold":
+      return { ...base, kind: "world", dir: "in", text: `POST /hold · ${str(e.payment_intent)} · ${euro(num(e.amount_cents))} bound to the next plug-in` };
+    case "intent_result": {
+      const ok = Boolean(e.ok);
+      const err = e.error;
+      const msg = err == null ? "" : typeof err === "string" ? err : str(obj(err).message);
+      return {
+        ...base,
+        kind: "stripe",
+        dir: "in",
+        text: ok
+          ? `${str(e.kind, "capture")} ${str(e.payment_intent)} ${euro(num(e.amount_cents))} → ${str(e.status)}`
+          : `${str(e.kind, "capture")} ${str(e.payment_intent)} ${euro(num(e.amount_cents))} → refused: ${msg || str(e.status)}`,
+      };
+    }
+    case "cmd": {
+      const op = str(e.op);
+      const extra =
+        op === "plug" ? ` · ${str(e.episode_id)}${e.payment_intent ? ` · ${str(e.payment_intent)}` : ""} · ${str(e.power_kw, "11")} kW` : op === "unplug" ? ` · ${num(e.energy_wh)} Wh${e.offline ? " · while offline" : ""}` : op === "quirk" ? ` ${str(e.quirk)} ${e.on === false ? "off" : "on"}` : "";
+      return { ...base, kind: "cmd", text: `${op}${extra}` };
+    }
+    case "charger": {
+      const kind = str(e.kind);
+      const act = str(e.ocpp_action);
+      const q = e.queue != null ? ` (${str(e.queue)} waiting)` : "";
+      if (kind === "queued") return { ...base, kind: "ocpp", dir: "queued", text: `${act} queued in firmware (offline)${q}` };
+      if (kind === "dropped") return { ...base, kind: "ocpp", dir: "queued", text: `${act} dropped (offline, queue_offline off)` };
+      if (kind === "duplicate") return { ...base, kind: "ocpp", dir: "dup", text: `${act} delivered again, 1.2 s after the first (dup_stop)` };
+      if (kind === "online" || kind === "offline") return { ...base, kind: "link", text: kind === "online" ? "reconnected to the CSMS" : "lost the CSMS" };
+      if (kind === "boot") return { ...base, kind: "link", text: "firmware booted" };
+      if (kind === "reboot") return { ...base, kind: "cmd", text: "rebooting (link down, no energy flows)" };
+      if (kind === "meter-reset") return { ...base, kind: "ocpp", dir: "queued", text: "energy register reset to 0 Wh (meter_reset_on_reboot)" };
+      if (kind === "start-lost") return { ...base, kind: "ocpp", dir: "queued", text: "StartTransaction lost in firmware (stop_without_start)" };
+      if (kind === "rejected") return { ...base, kind: "ocpp", dir: "queued", text: `${act} rejected by the CSMS${e.why ? `: ${str(e.why)}` : ""}` };
+      return { ...base, kind: "world", text: `${kind}${act ? ` ${act}` : ""}${e.why ? ` · ${str(e.why)}` : ""}` };
+    }
+    case "intent": {
+      const i = obj(e.intent);
+      return { ...base, charger: str(i.charger) || charger, kind: "settle", dir: "out", text: `settle.js v${str(i.settle_version)} → ${str(i.kind, "capture")} intent ${str(i.intent_id)} · ${str(i.episode_id)} · ${euro(num(i.amount_cents))}` };
+    }
+    case "settle":
+      return { ...base, kind: "world", text: `PUT /settle · v${str(e.version)} loaded fresh (node:vm)${e.replayed ? " · replayed over the event history" : ""}` };
+    case "settler_error":
+      return { ...base, kind: "world", text: `settle.js v${str(e.version)} threw: ${str(e.error)}` };
+    case "suite":
+      return { ...base, kind: "world", text: `POST /suite · v${str(e.settle_version)} · ${str(e.summary)}` };
+    case "violation":
+      return { ...base, kind: "world", text: `OCPP schema violation: ${compact(e)}` };
+    default:
+      return { ...base, kind: "world", text: `${type} ${compact(e)}` };
   }
-  const dirRaw = str(e.dir ?? e.direction).toLowerCase();
-  return {
-    id: str(e.id ?? e.seq ?? `${when(e.t ?? e.ts ?? e.at)}-${i}`),
-    t: when(e.t ?? e.ts ?? e.at ?? e.time),
-    charger: e.charger == null ? null : str(e.charger),
-    kind,
-    dir: /dup/.test(dirRaw) || e.duplicate ? "dup" : /queue/.test(dirRaw) || e.queued ? "queued" : /out|tx/.test(dirRaw) ? "out" : "in",
-    text,
-  };
 }
 
 function normScenario(raw: unknown): Scenario {
   const s = obj(raw);
-  const faultsRaw = s.faults;
-  const faults = Array.isArray(faultsRaw) ? faultsRaw.map((f) => (typeof f === "string" ? f : str(obj(f).type ?? obj(f).op ?? obj(f).kind))) : faultsRaw && typeof faultsRaw === "object" ? Object.keys(faultsRaw).filter((k) => obj(faultsRaw)[k]) : [];
+  const faults = arr(s.faults).map((f) => (typeof f === "string" ? f : str(obj(f).type ?? obj(f).op ?? obj(f).kind)));
   const double = num(s.double);
   const stranded = num(s.stranded);
   const unbilled = num(s.unbilled);
   const overbilled = num(s.overbilled);
-  return { seed: num(s.seed), faults, double, stranded, unbilled, overbilled, ok: Boolean(s.ok ?? double + stranded + unbilled + overbilled === 0) };
+  const underbilled = num(s.underbilled);
+  return {
+    seed: num(s.seed),
+    name: str(s.name) || undefined,
+    faults,
+    chargers: arr(s.chargers).map(String),
+    double,
+    stranded,
+    unbilled,
+    overbilled,
+    underbilled,
+    ok: Boolean(s.ok ?? double + stranded + unbilled + overbilled + underbilled === 0),
+    notes: arr(s.notes).map(String),
+  };
 }
 
 export function normSuite(raw: unknown, fallbackVersion = ""): SuiteReport | null {
   if (!raw) return null;
   const r = obj(raw);
-  const scenarios = arr(r.scenarios ?? r.results ?? r.runs ?? raw).map(normScenario);
+  const scenarios = arr(r.scenarios).map(normScenario);
   if (scenarios.length === 0) return null;
   return {
-    version: str(r.version ?? r.settle_version ?? obj(r.settle).version, fallbackVersion),
-    ran_at: when(r.ran_at ?? r.at ?? r.t ?? Date.now()),
+    version: vtag(r.version ?? r.settle_version, fallbackVersion || "v1"),
+    ran_at: when(r.ran_at ?? r.at) || Date.now(),
+    summary: str(r.summary) || undefined,
     scenarios,
     totals: totals(scenarios),
   };
 }
 
-function normSettle(raw: unknown): Settle | null {
+function normSettle(raw: unknown, prev?: Settle): Settle | null {
   const s = obj(raw);
-  const source = str(s.source ?? s.code);
-  if (!source) return null;
-  const version = str(s.version ?? s.v, "v1");
+  const version = s.version != null ? vtag(s.version) : "";
+  if (!version) return null;
+  const source = str(s.source) || (prev && prev.version === version ? prev.source : "");
+  const name = str(s.name);
+  // The world's version counter keeps counting across resets, so the name decides.
+  const shipped = /naive/i.test(name) || (!name && num(s.version, 1) <= 1);
   return {
-    version: /^\d+$/.test(version) ? `v${version}` : version,
+    version,
     source,
-    author: str(s.author) === "agent" || num(s.version) > 1 ? "agent" : "shipped",
-    loaded_at: when(s.loaded_at ?? s.at ?? Date.now()),
+    author: shipped ? "shipped" : "agent",
+    loaded_at: when(s.loaded_at),
   };
 }
 
-/** Receipt lines derive from holds and intent results, in time order. */
-function buildReceipt(chargers: Charger[], intents: Intent[], events: WorldEvent[]): ReceiptLine[] {
+/** The receipt derives from the world's holds and their results, in time order. */
+function buildReceipt(holds: J[], intents: Intent[]): ReceiptLine[] {
   const lines: ReceiptLine[] = [];
-  for (const c of chargers) {
-    if (!c.hold) continue;
-    const holdEvt = events.find((e) => e.charger === c.id && /hold/i.test(e.text) && e.text.includes(c.hold!.payment_intent));
-    lines.push({
-      id: `hold-${c.hold.payment_intent}`,
-      t: holdEvt?.t ?? 0,
-      kind: "hold",
-      charger: c.id,
-      amount_cents: c.hold.amount_cents,
-      payment_intent: c.hold.payment_intent,
-      stripe_url: stripeUrl(c.hold.payment_intent),
-      text: `HOLD ${euro(c.hold.amount_cents)} on ${c.id}`,
-    });
+  const byWorldId = new Map(intents.map((i) => [i.id ?? i.intent_id, i]));
+  for (const h of holds) {
+    const pi = str(h.payment_intent);
+    if (!pi) continue;
+    const charger = str(h.charger);
+    const auth = num(h.amount_cents, 5000);
+    const placed = when(h.placed_at);
+    lines.push({ id: `hold-${pi}`, t: placed, kind: "hold", charger, amount_cents: auth, payment_intent: pi, stripe_url: stripeUrl(pi), text: `HOLD ${euro(auth)} on ${charger}` });
+    arr(h.results)
+      .map(obj)
+      .forEach((r, k) => {
+        const i = byWorldId.get(str(r.intent));
+        const t = (i?.created_at || placed) + k * 2 + 1;
+        const amt = num(r.amount_cents);
+        const kind = str(r.kind, "capture");
+        if (r.ok && kind === "capture") {
+          lines.push({ id: `cap-${pi}-${k}`, t, kind: "capture", charger, amount_cents: amt, payment_intent: pi, stripe_url: stripeUrl(pi), text: `CAPTURE ${euro(amt)}` });
+          const rel = num(h.amount_released, auth - amt);
+          if (rel > 0) lines.push({ id: `rel-${pi}-${k}`, t: t + 1, kind: "released", charger, amount_cents: rel, payment_intent: pi, stripe_url: stripeUrl(pi), text: `RELEASED ${euro(rel)}` });
+        } else if (r.ok && kind === "release") {
+          lines.push({ id: `rel-${pi}-${k}`, t, kind: "released", charger, amount_cents: auth, payment_intent: pi, stripe_url: stripeUrl(pi), text: `RELEASED ${euro(auth)} (no energy)` });
+        } else {
+          const err = r.error;
+          const msg = err == null ? str(r.status, "refused") : typeof err === "string" ? err : str(obj(err).message ?? JSON.stringify(err));
+          lines.push({ id: `ref-${pi}-${k}`, t, kind: "refused", charger, amount_cents: amt, payment_intent: pi, stripe_url: stripeUrl(pi), text: `REFUSED: ${msg}` });
+        }
+      });
   }
-  let n = 0;
-  for (const i of intents) {
-    if (!i.result) continue;
-    n++;
-    const t = n; // ordering within the intent list is the world's order
-    if (i.result.ok) {
-      lines.push({ id: `cap-${i.intent_id}`, t, kind: "capture", charger: i.charger, amount_cents: i.amount_cents, payment_intent: i.payment_intent, stripe_url: stripeUrl(i.payment_intent), text: `CAPTURE ${euro(i.amount_cents)}` });
-      const hold = chargers.find((c) => c.hold?.payment_intent === i.payment_intent)?.hold;
-      const auth = hold?.amount_cents ?? 5000;
-      if (auth - i.amount_cents > 0) lines.push({ id: `rel-${i.intent_id}`, t: t + 0.5, kind: "released", charger: i.charger, amount_cents: auth - i.amount_cents, payment_intent: i.payment_intent, stripe_url: stripeUrl(i.payment_intent), text: `RELEASED ${euro(auth - i.amount_cents)}` });
-    } else {
-      lines.push({ id: `ref-${i.intent_id}`, t, kind: "refused", charger: i.charger, amount_cents: i.amount_cents, payment_intent: i.payment_intent, stripe_url: stripeUrl(i.payment_intent), text: `REFUSED: ${i.result.error ?? i.result.status}` });
-    }
-  }
-  // Holds first (they have real timestamps or 0), then intents in world order.
-  return lines.sort((a, b) => (a.kind === "hold" && b.kind !== "hold" ? -1 : b.kind === "hold" && a.kind !== "hold" ? 1 : a.t - b.t));
+  return lines.sort((a, b) => a.t - b.t);
 }
 
 // ------------------------------------------------------------ the adapter
@@ -257,8 +342,9 @@ export class LiveWorld implements WorldAdapter {
   private ticking = false;
   private settle: Settle = { version: "v1", source: "", author: "shipped", loaded_at: 0 };
   private suite: SuiteReport | null = null;
-  private tariff = 38;
+  private tariff = 60;
   private failures = 0;
+  private lastSuiteCheck = 0;
 
   constructor() {
     this.snap = {
@@ -306,23 +392,35 @@ export class LiveWorld implements WorldAdapter {
   private async ensure() {
     try {
       const r = obj(await api("/api/world/ensure", { method: "POST", json: {} }));
-      const info = obj(r.sandbox ?? r);
+      const sb = obj(r.sandbox);
+      const local = str(r.mode) === "local";
       this.emit({
         sandbox: {
-          ...this.snap.sandbox,
-          name: str(info.name, this.snap.sandbox.name),
-          rootfs: str(info.rootfs ?? info.image, "devbox:1"),
-          egress: arr(info.egress ?? info.allowlist).map(String).length ? arr(info.egress ?? info.allowlist).map(String) : ["sinkhole.invalid"],
-          state: (str(info.state ?? info.status, "running") as "running" | "paused" | "absent") || "running",
-          preview: str(info.url ?? info.preview ?? info.previewUrl) || undefined,
-          creates_used: info.creates_used != null ? str(info.creates_used) : undefined,
+          provider: local ? "local" : "CreateOS",
+          name: local ? "local world (WORLD_URL)" : str(sb.name, "once-world"),
+          rootfs: local ? "host node" : "devbox:1",
+          egress: local ? [] : arr(sb.egress).map(String).length ? arr(sb.egress).map(String) : ["sinkhole.invalid"],
+          keys_inside: [],
+          state: local ? "running" : ((str(sb.status, "running") as "running" | "paused" | "absent") || "running"),
+          preview: str(r.url) || undefined,
+          creates_used: r.creates_used_24h !== undefined ? `${str(r.creates_used_24h)}/${str(r.creates_limit_24h)} in 24 h` : undefined,
         },
       });
-      const s = await api("/api/world/settle").catch(() => null);
-      const settle = normSettle(s);
-      if (settle) this.settle = settle;
+      await this.loadSettle();
     } catch (e) {
       this.emit({ error: (e as Error).message });
+    }
+  }
+
+  private async loadSettle() {
+    try {
+      const s = normSettle(await api("/api/world/settle"), this.settle);
+      if (s) {
+        this.settle = s;
+        this.emit({ settle: s });
+      }
+    } catch {
+      /* the next poll retries */
     }
   }
 
@@ -330,39 +428,57 @@ export class LiveWorld implements WorldAdapter {
     if (this.inflight) return;
     this.inflight = true;
     try {
-      const raw = obj(await api("/api/world/state"));
-      const world = obj(raw.state ?? raw.world ?? raw);
-      this.tariff = num(world.tariff_cents_per_kwh ?? obj(world.tariff).cents_per_kwh ?? world.tariff, this.tariff) || this.tariff;
-      const intents = arr(world.intents ?? raw.intents, "items").map(normIntent);
-      const holds = arr(world.holds);
-      const episodes = arr(world.episodes);
-      const chargers = arr(world.chargers, "items").map((c) => normCharger(c, holds, episodes, intents, this.tariff)).filter((c) => c.id);
-      const events = arr(world.events ?? world.recent_events ?? raw.events).map(normEvent);
-      const settleRaw = world.settle ?? raw.settle;
-      const settle = normSettle(settleRaw) ?? this.settle;
-      if (settle.source && (settle.version !== this.settle.version || !this.settle.source)) this.settle = settle;
-      else if (settleRaw && str(obj(settleRaw).version) && !obj(settleRaw).source) this.settle = { ...this.settle, version: normSettle({ ...obj(settleRaw), source: "x" })!.version };
-      const suite = normSuite(world.suite ?? world.last_suite ?? raw.suite, this.settle.version) ?? this.suite;
-      this.suite = suite;
+      const w = obj(await api("/api/world/state?events=120"));
+      this.tariff = num(w.tariff_cents_per_kwh, this.tariff) || this.tariff;
+      const holds = arr(w.holds).map(obj);
+      const intents = arr(w.intents).map(normIntent);
+      const chargers = arr(w.chargers)
+        .map((c) => normCharger(c, holds, this.tariff))
+        .filter((c) => c.id);
+      const events = arr(w.events)
+        .map(normEvent)
+        .filter((e): e is WorldEvent => e !== null);
+      const sv = vtag(obj(w.settle).version, this.settle.version);
+      if (sv !== this.settle.version || !this.settle.source) {
+        this.settle = { ...(normSettle(w.settle, this.settle) ?? this.settle), source: sv === this.settle.version ? this.settle.source : "" };
+        void this.loadSettle();
+      }
       this.failures = 0;
       this.emit({
         chargers,
         events,
         intents,
-        receipt: buildReceipt(chargers, intents, events),
+        receipt: buildReceipt(holds, intents),
         settle: this.settle,
-        suite,
+        suite: this.suite,
         tariff_cents_per_kwh: this.tariff,
         connected: true,
         error: undefined,
       });
-      // Tick while there is anything pending (and once a second anyway: cheap, idempotent).
-      if (!this.ticking) void this.tick();
+      if (!this.suite && Date.now() - this.lastSuiteCheck > 15000) {
+        this.lastSuiteCheck = Date.now();
+        void this.loadLastSuite();
+      }
+      // The settlement tick: idempotent on the host, once a second while the board is open.
+      if (!this.ticking && intents.some((i) => !i.result)) void this.tick();
     } catch (e) {
       this.failures++;
       if (this.failures > 2) this.emit({ connected: false, error: (e as Error).message });
     } finally {
       this.inflight = false;
+    }
+  }
+
+  private async loadLastSuite() {
+    try {
+      const p = obj(await api("/api/proof?verify=0"));
+      const s = normSuite(p.suite, this.settle.version);
+      if (s) {
+        this.suite = s;
+        this.emit({ suite: s });
+      }
+    } catch {
+      /* fine */
     }
   }
 
@@ -373,16 +489,23 @@ export class LiveWorld implements WorldAdapter {
 
   async checkout(charger: string): Promise<CheckoutStart> {
     const r = obj(await api("/api/checkout", { method: "POST", json: { charger } }));
-    const url = str(r.url ?? obj(r.session).url);
+    const url = str(r.url);
     if (!url) throw new Error("Checkout did not return a URL");
-    return { mode: "redirect", url, session_id: str(r.id ?? r.session_id) || undefined };
+    return { mode: "redirect", url, session_id: str(r.id) || undefined };
   }
 
   async confirmCheckout(sessionId: string) {
     try {
       const r = obj(await api(`/api/checkout/confirm?session_id=${encodeURIComponent(sessionId)}`));
-      const ok = Boolean(r.ok ?? r.bound ?? /requires_capture|succeeded/.test(str(r.status ?? obj(r.payment_intent).status)));
-      return { ok, charger: str(r.charger) || undefined, payment_intent: str(typeof r.payment_intent === "string" ? r.payment_intent : obj(r.payment_intent).id) || undefined, error: ok ? undefined : str(r.error ?? r.status, "not bound") };
+      const pi = obj(r.payment_intent);
+      const ok = Boolean(r.hold) && !r.hold_error;
+      const status = str(pi.status);
+      return {
+        ok,
+        charger: str(r.charger) || undefined,
+        payment_intent: str(pi.id) || undefined,
+        error: ok ? undefined : str(r.hold_error) || (status ? `PaymentIntent is ${status}, not requires_capture` : `session ${str(obj(r.session).status, "incomplete")}`),
+      };
     } catch (e) {
       return { ok: false, error: (e as Error).message };
     }
@@ -393,6 +516,7 @@ export class LiveWorld implements WorldAdapter {
     this.ticking = true;
     try {
       await api("/api/settle/tick", { method: "POST", json: {} });
+      void this.poll();
     } catch {
       /* the next poll retries */
     } finally {
@@ -400,34 +524,23 @@ export class LiveWorld implements WorldAdapter {
     }
   }
 
-  async *runSuite(): AsyncIterable<AgentEvent> {
-    yield { type: "status", text: `Running 30 seeded storms against settle.js ${this.settle.version} inside the sandbox` };
-    try {
-      const raw = await api("/api/world/suite", { method: "POST", json: { count: 30 } });
-      const report = normSuite(raw, this.settle.version);
-      if (!report) throw new Error("the suite returned no scenarios");
-      for (let i = 0; i < report.scenarios.length; i++) {
-        yield { type: "scenario", scenario: report.scenarios[i], index: i, count: report.scenarios.length };
-        await new Promise((r) => setTimeout(r, 60));
-      }
-      this.suite = report;
-      this.emit({ suite: report });
-      yield { type: "suite", report };
-    } catch (e) {
-      yield { type: "error", text: (e as Error).message };
-    }
-  }
-
-  async *fix(): AsyncIterable<AgentEvent> {
+  /** Read an NDJSON stream of host AgentEvents. */
+  private async *ndjson(path: string, body: unknown): AsyncIterable<AgentEvent> {
     let res: Response;
     try {
-      res = await fetch("/api/agent/fix", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({}) });
+      res = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}) });
     } catch (e) {
       yield { type: "error", text: (e as Error).message };
       return;
     }
     if (!res.ok || !res.body) {
-      yield { type: "error", text: `agent route answered ${res.status}` };
+      let msg = `the host answered ${res.status}`;
+      try {
+        msg = str(obj(JSON.parse(await res.text())).error, msg);
+      } catch {
+        /* keep */
+      }
+      yield { type: "error", text: msg };
       return;
     }
     const reader = res.body.getReader();
@@ -440,11 +553,9 @@ export class LiveWorld implements WorldAdapter {
       buf += dec.decode(value, { stream: true });
       let nl: number;
       while ((nl = buf.indexOf("\n")) >= 0) {
-        let line = buf.slice(0, nl).trim();
+        const line = buf.slice(0, nl).trim();
         buf = buf.slice(nl + 1);
         if (!line) continue;
-        if (line.startsWith("data:")) line = line.slice(5).trim();
-        if (line.startsWith("event:") || line.startsWith(":")) continue;
         let msg: J;
         try {
           msg = obj(JSON.parse(line));
@@ -453,80 +564,123 @@ export class LiveWorld implements WorldAdapter {
           continue;
         }
         const ev = this.normAgent(msg, count++);
-        if (ev) {
-          if (ev.type === "suite") {
-            this.suite = ev.report;
-            this.emit({ suite: ev.report });
-          }
-          if (ev.type === "diff") this.settle = { version: ev.version, source: ev.new, author: "agent", loaded_at: Date.now() };
-          if (ev.type === "uploaded") this.settle = { ...this.settle, version: ev.version, author: "agent", loaded_at: Date.now() };
-          yield ev;
+        if (!ev) continue;
+        if (ev.type === "suite" && ev.phase !== "baseline") {
+          this.suite = ev.report;
+          this.emit({ suite: ev.report });
         }
+        if (ev.type === "diff") this.settle = { version: ev.version, source: ev.new, author: "agent", loaded_at: Date.now() };
+        if (ev.type === "uploaded") this.settle = { ...this.settle, version: ev.version, author: "agent", loaded_at: Date.now() };
+        if (ev.type === "done") {
+          if (ev.version) this.settle = { ...this.settle, version: ev.version };
+          void this.loadSettle();
+        }
+        yield ev;
       }
     }
     void this.poll();
   }
 
   private normAgent(m: J, i: number): AgentEvent | null {
-    const type = str(m.type ?? m.event ?? m.kind).toLowerCase();
-    const text = str(m.text ?? m.message ?? m.summary ?? m.status);
-    if (/^attempt/.test(type)) return { type: "attempt", n: num(m.n ?? m.attempt, 1), of: num(m.of ?? m.max, 3) };
-    if (/model/.test(type)) return { type: "model", name: str(m.name ?? m.model), provider: str(m.provider, "OpenRouter") };
-    if (/think|reason/.test(type)) return { type: "thinking", text };
-    if (/diff|code|settle/.test(type) && (m.new != null || m.source != null || m.after != null)) {
-      const version = str(m.version ?? m.v, `v${num(this.settle.version.replace(/\D/g, ""), 1) + 1}`);
-      return { type: "diff", old: str(m.old ?? m.before ?? m.previous ?? this.settle.source), new: str(m.new ?? m.after ?? m.source), version: /^\d+$/.test(version) ? `v${version}` : version };
+    const type = str(m.type).toLowerCase();
+    const text = str(m.text ?? m.message);
+    switch (type) {
+      case "attempt":
+        return { type: "attempt", n: num(m.n, 1), of: num(m.of, 3) };
+      case "model":
+        return { type: "model", name: str(m.name ?? m.model), provider: str(m.provider, "OpenRouter") };
+      case "fallback":
+        return { type: "status", text: `model ${str(m.model)} failed (${str(m.error)}); trying the next one` };
+      case "reasoning":
+      case "thinking":
+        return text ? { type: "thinking", text } : null;
+      case "delta":
+        return text ? { type: "delta", text } : null;
+      case "diff":
+        return { type: "diff", old: str(m.old), new: str(m.new), version: vtag(m.version, this.settle.version) };
+      case "uploaded":
+        return { type: "uploaded", version: vtag(m.version, this.settle.version) };
+      case "scenario":
+        return { type: "scenario", scenario: normScenario(m.scenario ?? m), index: num(m.index, i), count: num(m.count, 30) };
+      case "suite": {
+        const report = normSuite(m.report ?? m, this.settle.version);
+        const phase = str(m.phase) as "baseline" | "attempt" | "deployed" | "";
+        return report ? { type: "suite", report, phase: phase || undefined } : { type: "status", text: text || "suite finished" };
+      }
+      case "done":
+        return { type: "done", ok: Boolean(m.ok), version: vtag(m.version, this.settle.version), attempts: num(m.attempts, 0), reason: str(m.reason) || undefined };
+      case "error":
+        return { type: "error", text: text || "the agent loop failed" };
+      case "status":
+      default:
+        return text ? { type: "status", text } : null;
     }
-    if (/upload|loaded|put/.test(type)) {
-      const version = str(m.version, this.settle.version);
-      return { type: "uploaded", version: /^\d+$/.test(version) ? `v${version}` : version };
-    }
-    if (/^scenario|^tile|^result$/.test(type)) return { type: "scenario", scenario: normScenario(m.scenario ?? m), index: num(m.index ?? m.i, i), count: num(m.count ?? m.of, 30) };
-    if (/suite|report/.test(type)) {
-      const report = normSuite(m.report ?? m.suite ?? m, this.settle.version);
-      return report ? { type: "suite", report } : { type: "status", text: text || "suite finished" };
-    }
-    if (/done|finish|complete|success/.test(type)) {
-      const version = str(m.version, this.settle.version);
-      return { type: "done", ok: Boolean(m.ok ?? m.passed ?? m.success ?? true), version: /^\d+$/.test(version) ? `v${version}` : version, attempts: num(m.attempts ?? m.attempt, 1) };
-    }
-    if (/error|fail/.test(type)) return { type: "error", text: text || "the agent loop failed" };
-    return text ? { type: "status", text } : null;
+  }
+
+  async *runSuite(): AsyncIterable<AgentEvent> {
+    for await (const e of this.ndjson("/api/world/suite?stream=1", { count: 30 })) yield e;
+  }
+
+  async *fix(): AsyncIterable<AgentEvent> {
+    for await (const e of this.ndjson("/api/agent/fix", {})) yield e;
   }
 
   async proof(): Promise<Proof> {
     const r = obj(await api("/api/proof"));
-    const captures = arr(r.captures ?? r.recent ?? r.ledger, "items").map((raw) => {
+    const captures = arr(r.captures).map((raw) => {
       const c = obj(raw);
-      const so = obj(c.stripe_object);
       const status = str(c.status).toLowerCase();
+      const pi = str(c.payment_intent);
       return {
-        payment_intent: str(c.payment_intent ?? so.id),
+        payment_intent: pi,
         charger: str(c.charger),
         episode_id: str(c.episode_id),
-        amount_cents: num(c.amount_cents ?? so.amount_received),
-        authorized_cents: num(so.amount ?? c.authorized_cents, 5000),
-        status: (c.ok === true || status === "succeeded" ? "succeeded" : status === "requires_capture" ? "requires_capture" : status === "canceled" ? "canceled" : "refused") as "succeeded" | "requires_capture" | "canceled" | "refused",
+        amount_cents: num(c.amount_cents),
+        authorized_cents: num(c.authorized_cents, 5000),
+        status: (status === "succeeded" ? "succeeded" : status === "canceled" ? "canceled" : status === "refused" ? "refused" : "requires_capture") as "succeeded" | "requires_capture" | "canceled" | "refused",
         idempotency_key: str(c.idempotency_key),
-        t: when(c.at ?? c.t),
+        t: when(c.t),
         error: c.error == null ? undefined : str(c.error),
-        url: str(so.dashboard_url) || stripeUrl(str(c.payment_intent ?? so.id)),
+        url: str(c.url) || stripeUrl(pi),
       };
     });
-    const sandboxRaw = obj(r.sandbox ?? r.world);
+    const holds: StripeHold[] = arr(r.holds).map((raw) => {
+      const h = obj(raw);
+      return {
+        payment_intent: str(h.payment_intent),
+        status: str(h.status),
+        amount_authorized: num(h.amount_authorized),
+        amount_received: num(h.amount_received),
+        amount_capturable: num(h.amount_capturable),
+        charger: str(h.charger) || undefined,
+        dashboard_url: str(h.dashboard_url) || stripeUrl(str(h.payment_intent)),
+        capture_attempts: num(h.capture_attempts),
+        captures_succeeded: num(h.captures_succeeded),
+        refusals: arr(h.refusals).map(String),
+        error: h.error == null ? undefined : str(h.error),
+      };
+    });
+    const sb = obj(r.sandbox);
+    const suite = normSuite(r.suite, this.settle.version) ?? this.suite;
+    if (suite && suite !== this.suite) {
+      this.suite = suite;
+      this.emit({ suite });
+    }
+    const settle = normSettle(r.settle, this.settle) ?? this.settle;
     return {
       captures,
-      suite: normSuite(r.suite ?? r.last_suite, this.settle.version) ?? this.suite,
-      settle: normSettle(r.settle) ?? this.settle,
+      holds,
+      suite,
+      settle,
       sandbox: {
-        provider: "CreateOS",
-        name: str(sandboxRaw.name, this.snap.sandbox.name),
-        rootfs: str(sandboxRaw.rootfs ?? sandboxRaw.image, "devbox:1"),
-        egress: arr(sandboxRaw.egress ?? sandboxRaw.allowlist).map(String).length ? arr(sandboxRaw.egress ?? sandboxRaw.allowlist).map(String) : ["sinkhole.invalid"],
-        keys_inside: arr(sandboxRaw.keys_inside).map(String),
-        state: (str(sandboxRaw.state ?? sandboxRaw.status, this.snap.sandbox.state) as "running" | "paused" | "absent") || "running",
-        preview: str(sandboxRaw.url ?? sandboxRaw.preview) || this.snap.sandbox.preview,
-        creates_used: sandboxRaw.creates_used != null ? str(sandboxRaw.creates_used) : this.snap.sandbox.creates_used,
+        provider: (str(sb.provider) === "local" ? "local" : "CreateOS") as "local" | "CreateOS",
+        name: str(sb.name, this.snap.sandbox.name),
+        rootfs: str(sb.rootfs, "devbox:1"),
+        egress: arr(sb.egress).map(String),
+        keys_inside: arr(sb.keys_inside).map(String),
+        state: (str(sb.state, this.snap.sandbox.state) as "running" | "paused" | "absent") || "running",
+        preview: str(sb.preview) || this.snap.sandbox.preview,
+        creates_used: sb.creates_used != null ? str(sb.creates_used) : this.snap.sandbox.creates_used,
       },
     };
   }

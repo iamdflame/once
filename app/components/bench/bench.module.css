@@ -384,6 +384,21 @@
   color: var(--ink-soft);
 }
 
+.redList li + li {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed oklch(0.5 0.14 25 / 0.25);
+}
+
+.redList em {
+  display: block;
+  margin-top: 2px;
+  font-style: normal;
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  color: var(--ink-soft);
+}
+
 .redMore {
   color: var(--ink-mute);
 }
@@ -429,6 +444,12 @@
   color: var(--ink);
   font-family: var(--font-ui);
   font-size: 15px;
+}
+
+.logLine[data-kind="delta"] {
+  white-space: pre-wrap;
+  color: var(--ink-mute);
+  font-size: 12px;
 }
 
 .logLine[data-kind="done"] {

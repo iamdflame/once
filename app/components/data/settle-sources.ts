@@ -30,7 +30,7 @@ export function createSettler({ tariffCentsPerKwh }) {
         const wh = Math.max(0, p.meterStop - start.meterStart);
         const amount = Math.round((wh / 1000) * tariffCentsPerKwh);
         out.push({
-          intent_id: "cap_" + p.transactionId,
+          intent_id: "stop-" + p.transactionId,
           episode_id: "tx-" + p.transactionId,
           charger: evt.charger,
           payment_intent: hold.payment_intent,
@@ -76,7 +76,7 @@ export function createSettler({ tariffCentsPerKwh }) {
     ep.closed = true;
     const amount = Math.round((energy(ep) / 1000) * tariffCentsPerKwh);
     out.push({
-      intent_id: "cap_" + ep.id,          // idempotency key = the episode
+      intent_id: "episode-" + ep.id,      // one decision per episode
       episode_id: ep.id,
       charger,
       payment_intent: ep.payment_intent,
