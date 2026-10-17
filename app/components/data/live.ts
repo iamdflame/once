@@ -3,8 +3,8 @@
 // /intents, /suite, /events) and app/lib (proof, agent events). Field access
 // stays tolerant so a renamed field degrades to a blank, not a crash.
 
-import type { WorldAdapter } from "./adapter";
-import { totals } from "./adapter";
+import type { AgentRun, DriverCharge, DriverHold, DriverLedger, NextHold, ProbeReport, ProofWithDrivers, WorldAdapter } from "./adapter";
+import { chargeStory, holdStory, totals } from "./adapter";
 import type {
   AgentEvent,
   Charger,
@@ -12,7 +12,6 @@ import type {
   Command,
   Hold,
   Intent,
-  Proof,
   Quirk,
   ReceiptLine,
   Scenario,
@@ -336,6 +335,59 @@ function buildReceipt(holds: J[], intents: Intent[]): ReceiptLine[] {
   return lines.sort((a, b) => a.t - b.t);
 }
 
+/** World holds and intents (GET /state) -> holds per driver and attributed charges. */
+function driverLedger(holds: J[], intents: J[]): DriverLedger {
+  const holdByPi = new Map(holds.map((h) => [str(h.payment_intent), h]));
+  const charges: DriverCharge[] = intents
+    .filter((i) => !["rejected", "suppressed"].includes(str(i.status)))
+    .map((i) => {
+      const r = i.result != null ? obj(i.result) : null;
+      const kind = str(i.kind, "capture");
+      const e = r?.error;
+      const error = e == null ? undefined : stripeMsg(typeof e === "string" ? e : str(obj(e).message ?? JSON.stringify(e)));
+      const status: DriverCharge["status"] = !r ? "pending" : r.ok ? (kind === "release" ? "released" : "succeeded") : "refused";
+      const pi = str(i.payment_intent);
+      const c = {
+        id: str(i.id),
+        charger: str(i.charger),
+        payment_intent: pi,
+        driver: str(i.driver) || str(holdByPi.get(pi)?.driver) || null,
+        energy_driver: str(i.energy_driver) || null,
+        energy_episode_id: str(i.energy_episode_id) || null,
+        amount_cents: num(i.amount_cents),
+        status,
+        wrong_driver: typeof i.wrong_driver === "boolean" ? i.wrong_driver : null,
+        error,
+        url: stripeUrl(pi),
+        t: when(i.created_at),
+      };
+      return { ...c, story: chargeStory(c) };
+    });
+  return { holds: holds.map(normDriverHold), charges };
+}
+
+function normDriverHold(raw: unknown): DriverHold {
+  const h = obj(raw);
+  const s = str(h.status).toLowerCase();
+  const cf = h.captured_for ? obj(h.captured_for) : null;
+  const pi = str(h.payment_intent);
+  const base = {
+    driver: str(h.driver) || null,
+    seq: h.seq != null ? num(h.seq) : null,
+    charger: str(h.charger),
+    payment_intent: pi,
+    episode_id: str(h.episode_id) || null,
+    amount_cents: num(h.amount_cents ?? h.amount_authorized, 5000),
+    captured_cents: num(h.amount_captured ?? h.amount_received),
+    status: (s === "succeeded" ? "captured" : s === "canceled" ? "released" : "uncaptured") as DriverHold["status"],
+    stranded: Boolean(h.stranded),
+    charged_for_driver: str(cf?.driver ?? h.charged_for_driver) || null,
+    wrong_driver: typeof (cf?.wrong_driver ?? h.wrong_driver) === "boolean" ? Boolean(cf?.wrong_driver ?? h.wrong_driver) : null,
+    url: str(h.dashboard_url) || stripeUrl(pi),
+  };
+  return { ...base, story: holdStory(base) };
+}
+
 // ------------------------------------------------------------ the adapter
 
 export class LiveWorld implements WorldAdapter {
@@ -635,7 +687,41 @@ export class LiveWorld implements WorldAdapter {
     for await (const e of this.ndjson("/api/agent/fix", {})) yield e;
   }
 
-  async proof(): Promise<Proof> {
+  async nextHold(charger: string): Promise<NextHold> {
+    const r = obj(await api("/api/hold/next", { method: "POST", json: { charger } }));
+    const pi = str(r.payment_intent);
+    void this.poll();
+    return { payment_intent: pi, driver: str(r.driver, "B"), charger: str(r.charger, charger), label: str(r.label), dashboard_url: str(obj(r.stripe).dashboard_url) || stripeUrl(pi) };
+  }
+
+  async drivers(): Promise<DriverLedger> {
+    const w = obj(await api("/api/world/state"));
+    return driverLedger(arr(w.holds).map(obj), arr(w.intents).map(obj));
+  }
+
+  async lastAgentRun(): Promise<AgentRun | null> {
+    const r = obj(await api("/api/agent/last"));
+    if (!r.run) return null;
+    const run = obj(r.run);
+    return { ...(run as unknown as AgentRun), attempts: arr(run.attempts) as AgentRun["attempts"], errors: arr(run.errors).map(String), deployed: (run.deployed ?? null) as AgentRun["deployed"], final_diff: (run.final_diff ?? null) as AgentRun["final_diff"] };
+  }
+
+  async lastSuite(): Promise<SuiteReport | null> {
+    const r = obj(await api("/api/world/suite/last"));
+    const s = normSuite(r.report, this.settle.version);
+    if (s && !this.suite) {
+      this.suite = s;
+      this.emit({ suite: s });
+    }
+    return s;
+  }
+
+  async probe(): Promise<ProbeReport> {
+    const r = obj(await api("/api/world/probe", { method: "POST", json: {} }));
+    return { ...(r as unknown as ProbeReport), checks: arr(r.checks) as ProbeReport["checks"] };
+  }
+
+  async proof(): Promise<ProofWithDrivers> {
     const r = obj(await api("/api/proof"));
     const captures = arr(r.captures).map((raw) => {
       const c = obj(raw);
@@ -677,7 +763,29 @@ export class LiveWorld implements WorldAdapter {
       this.emit({ suite });
     }
     const settle = normSettle(r.settle, this.settle) ?? this.settle;
+    const charges: DriverCharge[] = arr(r.captures).map((raw) => {
+      const c = obj(raw);
+      const s = str(c.status).toLowerCase();
+      const pi = str(c.payment_intent);
+      const base = {
+        id: str(c.idempotency_key) || pi,
+        charger: str(c.charger),
+        payment_intent: pi,
+        driver: str(c.driver) || null,
+        energy_driver: str(c.energy_driver) || null,
+        energy_episode_id: str(c.energy_episode_id) || null,
+        amount_cents: num(c.amount_cents),
+        status: (s === "succeeded" ? "succeeded" : s === "canceled" ? "released" : s === "refused" ? "refused" : "pending") as DriverCharge["status"],
+        wrong_driver: typeof c.wrong_driver === "boolean" ? c.wrong_driver : null,
+        error: c.error == null ? undefined : stripeMsg(str(c.error)),
+        url: str(c.url) || stripeUrl(pi),
+        t: when(c.t),
+      };
+      return { ...base, story: chargeStory(base) };
+    });
     return {
+      drivers: arr(r.drivers).map(normDriverHold),
+      charges,
       captures,
       holds,
       suite,

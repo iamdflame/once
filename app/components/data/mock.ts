@@ -3,17 +3,17 @@
 // demo in BUILD-ONCE.md faithfully enough to build and test the UI against.
 // Nothing here touches the network.
 
-import type { WorldAdapter } from "./adapter";
-import { emptyReport, totals } from "./adapter";
+import type { AgentRun, DriverCharge, DriverHold, DriverLedger, NextHold, ProbeReport, ProofWithDrivers, WorldAdapter } from "./adapter";
+import { chargeStory, emptyReport, holdStory, totals } from "./adapter";
 import { SETTLE_V1, SETTLE_V2 } from "./settle-sources";
 import type {
   AgentEvent,
   Capture,
   Charger,
+  Hold,
   CheckoutStart,
   Command,
   Intent,
-  Proof,
   Quirk,
   ReceiptLine,
   Scenario,
@@ -61,6 +61,8 @@ interface MockCharger {
   tx: { id: number; meterStart: number } | null;
   queue: OcppMsg[];
   hold: Charger["hold"];
+  /** Holds paid while the current one is still open (the next driver), FIFO. */
+  nextHolds: Hold[];
   quirks: Record<Quirk, boolean>;
   episode: { id: string; wh: number } | null;
   ticks: number;
@@ -75,6 +77,7 @@ interface MockPI {
   charger: string;
   session: string;
   created: number;
+  driver: string;
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -230,6 +233,7 @@ function settlerV2(tariff: number): Settler {
     closed: boolean;
   }
   const episodes = new Map<string, Ep>();
+  const queued = new Map<string, Ep[]>(); // holds paid while the charger's episode is still open
   const seenStops = new Set<string>();
   const out: Omit<Intent, "result">[] = [];
   const energy = (ep: Ep) => ep.wh + (ep.live ? Math.max(0, ep.live.lastMeter - ep.live.meterStart) : 0);
@@ -248,17 +252,24 @@ function settlerV2(tariff: number): Settler {
   return {
     onEvent(evt) {
       if (evt.type === "hold") {
-        episodes.set(evt.charger, {
+        const fresh: Ep = {
           id: evt.episode_id!,
           payment_intent: evt.payment_intent!,
           hold_cents: evt.amount_cents!,
           wh: 0,
           live: null,
           closed: false,
-        });
+        };
+        const cur = episodes.get(evt.charger);
+        if (cur && !cur.closed) queued.set(evt.charger, [...(queued.get(evt.charger) ?? []), fresh]);
+        else episodes.set(evt.charger, fresh);
         return;
       }
-      const ep = episodes.get(evt.charger);
+      let ep = episodes.get(evt.charger);
+      if ((!ep || ep.closed) && evt.action === "StartTransaction" && queued.get(evt.charger)?.length) {
+        ep = queued.get(evt.charger)!.shift()!;
+        episodes.set(evt.charger, ep);
+      }
       if (!ep || ep.closed) return;
       const p = evt.payload as {
         transactionId?: number;
@@ -311,6 +322,12 @@ export class MockWorld implements WorldAdapter {
   private seq = 0;
   private suiteRuns = 0;
   private snap: Snapshot | null = null;
+  /** Mock attribution, as the world does it: the transaction a decision was made on -> its episode and driver. */
+  private txOwner = new Map<number, { episode_id: string; driver: string | null }>();
+  private trigger: number | null = null;
+  private attrib = new Map<string, { driver: string | null; energy_driver: string | null; energy_episode_id: string | null; wrong_driver: boolean | null }>();
+  private ended = new Set<string>();
+  private lastRun: AgentRun | null = null;
 
   constructor() {
     this.seed();
@@ -331,6 +348,7 @@ export class MockWorld implements WorldAdapter {
         tx: null,
         queue: [],
         hold: null,
+        nextHolds: [],
         quirks: defaultQuirks(),
         episode: null,
         ticks: 0,
@@ -380,6 +398,9 @@ export class MockWorld implements WorldAdapter {
     this.nextTx = 1001;
     this.episodeN = {};
     this.intentN = 0;
+    this.txOwner.clear();
+    this.attrib.clear();
+    this.ended.clear();
     this.seed();
     this.start();
     this.emit();
@@ -485,8 +506,10 @@ export class MockWorld implements WorldAdapter {
         break;
     }
     this.log(c.id, "ocpp", dir === "dup" ? `${text}   ← duplicate, 1.2 s after the first` : text, dir, true);
+    this.trigger = typeof p.transactionId === "number" ? p.transactionId : null;
     this.settler.onEvent({ type: "ocpp", charger: c.id, action: msg.action, payload: p });
     this.collectIntents();
+    this.trigger = null;
     this.emit();
   }
 
@@ -527,7 +550,18 @@ export class MockWorld implements WorldAdapter {
   private collectIntents() {
     for (const i of this.settler.intents()) {
       if (this.intents.some((x) => x.intent_id === i.intent_id)) continue;
-      this.intents.push({ ...i, id: `in_${String(++this.intentN).padStart(5, "0")}`, kind: "capture", created_at: Date.now() });
+      const id = `in_${String(++this.intentN).padStart(5, "0")}`;
+      this.intents.push({ ...i, id, kind: "capture", created_at: Date.now() });
+      const pi = this.stripe.get(i.payment_intent);
+      const own = this.trigger != null ? this.txOwner.get(this.trigger) : undefined;
+      const holdEp = this.holdOf(i.payment_intent)?.episode_id ?? null;
+      const energyEp = own?.episode_id ?? holdEp;
+      this.attrib.set(id, {
+        driver: pi?.driver ?? null,
+        energy_driver: own ? own.driver : (pi?.driver ?? null),
+        energy_episode_id: energyEp,
+        wrong_driver: energyEp && holdEp ? energyEp !== holdEp : null,
+      });
       this.log(i.charger, "settle", `settle.js ${this.settle.version} → capture intent ${i.intent_id} · ${i.episode_id} · €${(i.amount_cents / 100).toFixed(2)}`, "out", true);
     }
   }
@@ -587,8 +621,16 @@ export class MockWorld implements WorldAdapter {
     c.plugged = true;
     c.ticks = 0;
     c.tx = { id: this.nextTx++, meterStart: c.meterWh };
+    if (c.nextHolds.length && (!c.hold || c.hold.status !== "uncaptured" || (c.episode && this.ended.has(c.episode.id)))) {
+      // The next driver's hold binds to this plug-in.
+      c.hold = c.nextHolds.shift()!;
+      c.episode = { id: c.hold.episode_id!, wh: 0 };
+    }
     if (c.hold && c.hold.status === "uncaptured" && !c.episode) {
       c.episode = { id: c.hold.episode_id!, wh: 0 };
+    }
+    if (c.episode && c.hold && c.hold.episode_id === c.episode.id) {
+      this.txOwner.set(c.tx.id, { episode_id: c.episode.id, driver: this.stripe.get(c.hold.payment_intent)?.driver ?? null });
     }
     const idTag = c.hold ? "CARD-" + c.hold.payment_intent.slice(-6) : (c.idTag = "RFID-" + rid("", 6).toUpperCase());
     this.log(c.id, "cmd", "plug · connector 1 Preparing → Charging");
@@ -606,6 +648,7 @@ export class MockWorld implements WorldAdapter {
     const tx = c.tx;
     c.tx = null;
     this.log(c.id, "cmd", c.link === "up" ? "unplug · cable removed" : "unplug · cable removed while offline");
+    if (c.episode) this.ended.add(c.episode.id);
     if (tx) {
       if (c.episode) c.episode.wh += c.meterWh - tx.meterStart;
       this.send(c, { action: "StopTransaction", payload: { transactionId: tx.id, meterStop: c.meterWh, reason: "EVDisconnected" } });
@@ -660,7 +703,7 @@ export class MockWorld implements WorldAdapter {
     await sleep(900);
     const pi = rid("pi_3", 24);
     const session = rid("cs_test_", 24);
-    this.stripe.set(pi, { id: pi, amount: HOLD, captured: null, status: "requires_capture", charger, session, created: Date.now() });
+    this.stripe.set(pi, { id: pi, amount: HOLD, captured: null, status: "requires_capture", charger, session, created: Date.now(), driver: this.nextDriverLetter(charger, 1) });
     this.log(charger, "stripe", `Checkout Session paid · PaymentIntent ${pi} · €50.00 · capture_method manual · status requires_capture`, "in", true);
     return this.bindHold(c, pi, session);
   }
@@ -676,6 +719,126 @@ export class MockWorld implements WorldAdapter {
     return { payment_intent: pi };
   }
 
+  private nextDriverLetter(charger: string, min: number): string {
+    const placed = [...this.stripe.values()].filter((p) => p.charger === charger).length;
+    return String.fromCharCode(64 + Math.min(26, Math.max(min, placed + 1)));
+  }
+
+  private holdOf(pi: string): Hold | null {
+    for (const c of this.chargers.values()) {
+      if (c.hold?.payment_intent === pi) return c.hold;
+      const h = c.nextHolds.find((x) => x.payment_intent === pi);
+      if (h) return h;
+    }
+    return null;
+  }
+
+  /** The next driver's test hold: authorised at once and bound to the charger's next plug-in (no auto-plug). */
+  async nextHold(charger: string): Promise<NextHold> {
+    const c = this.chargers.get(charger);
+    if (!c) throw new Error(`unknown charger ${charger}`);
+    await sleep(500);
+    const driver = this.nextDriverLetter(charger, 2);
+    const pi = rid("pi_3", 24);
+    this.stripe.set(pi, { id: pi, amount: HOLD, captured: null, status: "requires_capture", charger, session: "", created: Date.now(), driver });
+    const episode_id = `${c.id}-E${(this.episodeN[c.id] = (this.episodeN[c.id] ?? 0) + 1)}`;
+    const hold: Hold = { payment_intent: pi, amount_cents: HOLD, status: "uncaptured", episode_id };
+    if (c.hold && c.hold.status === "uncaptured") c.nextHolds.push(hold);
+    else {
+      c.hold = hold;
+      c.episode = null;
+    }
+    this.log(c.id, "stripe", `PaymentIntent ${pi} · €50.00 · pm_card_visa · capture_method manual · driver ${driver}'s test hold · requires_capture`, "in", true);
+    this.log(c.id, "world", `POST /hold · ${pi} (driver ${driver}) bound to the next plug-in on ${c.id}`, "in", true);
+    this.settler.onEvent({ type: "hold", charger: c.id, payment_intent: pi, amount_cents: HOLD, episode_id });
+    this.print({ kind: "hold", charger: c.id, amount_cents: HOLD, payment_intent: pi, stripe_url: stripeUrl(pi), text: `HOLD €50.00 on ${c.id} (driver ${driver})` });
+    return { payment_intent: pi, driver, charger, label: `Driver ${driver}'s test hold: €50.00 authorised in Stripe test mode with the test card pm_card_visa, created server-side (mock)`, dashboard_url: stripeUrl(pi) };
+  }
+
+  async drivers(): Promise<DriverLedger> {
+    const charges: DriverCharge[] = this.intents.map((i) => {
+      const a = this.attrib.get(i.id ?? "") ?? { driver: this.stripe.get(i.payment_intent)?.driver ?? null, energy_driver: null, energy_episode_id: i.episode_id, wrong_driver: null };
+      const base = {
+        id: i.id ?? i.intent_id,
+        charger: i.charger,
+        payment_intent: i.payment_intent,
+        ...a,
+        amount_cents: i.amount_cents,
+        status: (!i.result ? "pending" : i.result.ok ? "succeeded" : "refused") as DriverCharge["status"],
+        error: i.result?.error,
+        url: stripeUrl(i.payment_intent),
+        t: i.created_at ?? Date.now(),
+      };
+      return { ...base, story: chargeStory(base) };
+    });
+    const holds: DriverHold[] = [...this.stripe.values()]
+      .sort((x, y) => x.created - y.created)
+      .map((pi) => {
+        const h = this.holdOf(pi.id);
+        const ok = charges.find((c) => c.payment_intent === pi.id && c.status === "succeeded");
+        const pending = charges.some((c) => c.payment_intent === pi.id && c.status === "pending");
+        const ep = h?.episode_id ?? null;
+        const base = {
+          driver: pi.driver,
+          seq: [...this.stripe.values()].filter((x) => x.charger === pi.charger && x.created <= pi.created).length,
+          charger: pi.charger,
+          payment_intent: pi.id,
+          episode_id: ep,
+          amount_cents: pi.amount,
+          captured_cents: pi.captured ?? 0,
+          status: (pi.status === "succeeded" ? "captured" : pi.status === "canceled" ? "released" : "uncaptured") as DriverHold["status"],
+          stranded: pi.status === "requires_capture" && !!ep && this.ended.has(ep) && !pending,
+          charged_for_driver: ok?.energy_driver ?? null,
+          wrong_driver: ok ? ok.wrong_driver : null,
+          url: stripeUrl(pi.id),
+        };
+        return { ...base, story: holdStory(base) };
+      });
+    return { holds, charges };
+  }
+
+  async lastAgentRun(): Promise<AgentRun | null> {
+    return this.lastRun;
+  }
+
+  async lastSuite(): Promise<SuiteReport | null> {
+    return this.suite;
+  }
+
+  async probe(): Promise<ProbeReport> {
+    await sleep(1200);
+    const mk = (group: "a" | "b" | "c" | "d", id: string, label: string, detail: string, expected: string, ms: number, layer: string) => ({
+      group, id, label, pass: true, applicable: true, verdict: "pass" as const, layer, detail, expected, ms,
+    });
+    const a = "blocked inside the vm (or refused by the loader)";
+    const checks = [
+      mk("a", "fetch", "settle.js calls fetch('https://api.stripe.com/v1/charges')", "blocked: ReferenceError: fetch is not defined", a, 3.2, "vm"),
+      mk("a", "require-literal", "settle.js contains require('fs')", "refused before it ran: settle.js cannot import or require anything", a, 1, "loader"),
+      mk("a", "require-hidden", "settle.js reaches for require indirectly (globalThis['req' + 'uire']('fs'))", "blocked: TypeError: r is not a function", a, 1.3, "vm"),
+      mk("a", "process-env", "settle.js reads process.env", "blocked: ReferenceError: process is not defined", a, 1.2, "vm"),
+      mk("a", "import", "settle.js calls import('node:fs') (hidden from the loader's pattern)", "blocked: TypeError: A dynamic import callback was not specified.", a, 1.2, "vm"),
+      mk("a", "eval", "settle.js calls eval('1 + 1')", "blocked: EvalError: Code generation from strings disallowed for this context", a, 1, "vm"),
+      mk("a", "function-escape", "settle.js tries the vm escape ({}).constructor.constructor('return process')()", "blocked: EvalError: Code generation from strings disallowed for this context", a, 1.1, "vm"),
+      mk("b", "infinite-loop", "settle.js runs for (;;) {} in onEvent (budget 1000 ms per call)", "stopped after 1006 ms: settle.js took longer than 1000 ms on one event and was stopped", "stopped at the 1 s budget", 1006, "vm"),
+      mk("c", "tcp-stripe", "the world process opens TCP to api.stripe.com:443", "no connection within 3000 ms", "fails: the CreateOS egress allowlist is a single sinkhole", 3001, "network"),
+      mk("c", "dns-example", "the world process resolves example.com", "ENOTFOUND: getaddrinfo ENOTFOUND example.com", "fails: the CreateOS egress allowlist is a single sinkhole", 12, "network"),
+      mk("d", "env-keys", "no Stripe, model or CreateOS key in the world process environment (names only, never values)", "9 variables, none named or valued like a key", "no Stripe, model or CreateOS key; sandbox egress locked", 0, "environment"),
+      mk("d", "sandbox-egress", "CreateOS reports the world sandbox's egress allowlist", 'egress ["sinkhole.invalid"] (mock)', 'exactly ["sinkhole.invalid"]', 0, "createos"),
+    ];
+    return {
+      ok: true,
+      mode: "mock",
+      note: "in-browser mock: these lines show the shape of a sandbox run; nothing was probed",
+      at: new Date().toISOString(),
+      passed: checks.length,
+      applicable: checks.length,
+      checks,
+      sandbox: { mode: "mock", egress: ["sinkhole.invalid"] },
+      env: { world_process: ["HOME", "HOSTNAME", "HOST", "NODE_ENV", "PATH", "PORT", "PWD", "SHLVL", "STATE_DIR"], flagged: [], sandbox_declared: ["HOST", "PORT"] },
+      ms: 4100,
+    };
+  }
+
   async confirmCheckout(): Promise<{ ok: boolean; error?: string }> {
     return { ok: false, error: "mock mode has no Stripe session to confirm" };
   }
@@ -686,7 +849,6 @@ export class MockWorld implements WorldAdapter {
     for (const intent of pending) {
       await sleep(400);
       const pi = this.stripe.get(intent.payment_intent);
-      const c = this.chargers.get(intent.charger);
       if (!pi) {
         intent.result = { ok: false, status: "error", error: "No such payment_intent" };
         continue;
@@ -695,9 +857,10 @@ export class MockWorld implements WorldAdapter {
         pi.status = "succeeded";
         pi.captured = intent.amount_cents;
         intent.result = { ok: true, status: "succeeded", stripe_object: pi.id };
-        if (c?.hold) {
-          c.hold.status = "captured";
-          c.hold.captured_cents = intent.amount_cents;
+        const h = this.holdOf(pi.id);
+        if (h) {
+          h.status = "captured";
+          h.captured_cents = intent.amount_cents;
         }
         this.log(intent.charger, "stripe", `capture ${pi.id} amount_to_capture=${intent.amount_cents} idempotency_key=once-cap-${intent.episode_id}-… → succeeded`, "in", true);
         this.print({
@@ -745,6 +908,7 @@ export class MockWorld implements WorldAdapter {
         this.settler.onEvent({ type: "hold", charger: c.id, payment_intent: c.hold.payment_intent, amount_cents: c.hold.amount_cents, episode_id: c.hold.episode_id });
         if (c.tx) this.settler.onEvent({ type: "ocpp", charger: c.id, action: "StartTransaction", payload: { transactionId: c.tx.id, meterStart: c.tx.meterStart } });
       }
+      for (const h of c.nextHolds) this.settler.onEvent({ type: "hold", charger: c.id, payment_intent: h.payment_intent, amount_cents: h.amount_cents, episode_id: h.episode_id });
     }
     this.log(null, "world", `PUT /settle · ${version} loaded fresh (node:vm, no fs, no net)`);
   }
@@ -767,6 +931,35 @@ export class MockWorld implements WorldAdapter {
   }
 
   async *fix(): AsyncIterable<AgentEvent> {
+    const t0 = Date.now();
+    const before = this.suite;
+    for await (const e of this.fixSteps()) {
+      if (e.type === "done") {
+        const s = (r: SuiteReport | null) =>
+          r ? { version: r.version, summary: r.summary, totals: { ...r.totals, underbilled: 0, invalid: 0, failed: r.totals.count - r.totals.ok } } : undefined;
+        const after = s(this.suite);
+        this.lastRun = {
+          ok: e.ok,
+          reason: e.reason ?? "",
+          provider: "mock replay",
+          model: "claude-sonnet-4-5",
+          started_at: t0,
+          finished_at: Date.now(),
+          ms: Date.now() - t0,
+          baseline: s(before && before.version === "v1" ? before : null),
+          attempts: [{ n: 1, model: "claude-sonnet-4-5", provider: "mock replay", plan: "Key the ledger by the plug-in episode, not the transactionId.", suite: after, deployed: e.ok }],
+          deployed: e.ok ? { version: e.version, suite: after } : null,
+          version: e.version,
+          final_diff: { attempt: 1, added: SETTLE_V2.split("\n").length, removed: SETTLE_V1.split("\n").length, unified: "", source: SETTLE_V2 },
+          errors: [],
+          timings: { model_ms: 4200, suite_ms: 5100, total_ms: Date.now() - t0 },
+        };
+      }
+      yield e;
+    }
+  }
+
+  private async *fixSteps(): AsyncIterable<AgentEvent> {
     const failing = this.suite && this.suite.version === this.settle.version ? this.suite : null;
     yield { type: "attempt", n: 1, of: 3 };
     yield { type: "model", name: "claude-sonnet-4-5", provider: "mock replay" };
@@ -805,7 +998,7 @@ export class MockWorld implements WorldAdapter {
     this.emit();
   }
 
-  async proof(): Promise<Proof> {
+  async proof(): Promise<ProofWithDrivers> {
     const captures: Capture[] = [...this.stripe.values()]
       .sort((a, b) => b.created - a.created)
       .flatMap((pi): Capture[] => {
@@ -839,6 +1032,7 @@ export class MockWorld implements WorldAdapter {
           url: stripeUrl(pi.id),
         }));
       });
-    return { captures, suite: this.suite, sandbox: this.snapshot().sandbox, settle: this.settle };
+    const { holds: drivers, charges } = await this.drivers();
+    return { captures, drivers, charges, suite: this.suite, sandbox: this.snapshot().sandbox, settle: this.settle };
   }
 }
