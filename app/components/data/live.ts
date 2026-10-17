@@ -298,6 +298,7 @@ function normSettle(raw: unknown, prev?: Settle): Settle | null {
     source,
     author: shipped ? "shipped" : "agent",
     loaded_at: when(s.loaded_at),
+    name: name || undefined,
   };
 }
 

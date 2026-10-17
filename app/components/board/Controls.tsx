@@ -25,7 +25,7 @@ export function Controls({
   const dis = (cond: boolean) => !c || busy !== null || cond;
 
   return (
-    <section className={s.panel} aria-labelledby="controls-h">
+    <section id="controls" className={s.panel} aria-labelledby="controls-h">
       <header className={s.panelHead}>
         <h2 id="controls-h" className={s.panelTitle}>
           Controls

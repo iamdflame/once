@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useWorld } from "@/components/data/provider";
 import type { AgentEvent, Scenario } from "@/components/data/types";
+import { settleLabel } from "@/components/data/types";
 import { Diff } from "./Diff";
 import { Tiles } from "./Tiles";
 import s from "./bench.module.css";
@@ -181,13 +182,13 @@ export function Bench() {
               {attempt ? <span>attempt {attempt.n}/{attempt.of}</span> : null}
               <span>model {model ?? (mode === "live" ? "waiting" : "—")}</span>
               <span>
-                settle.js <b>{current.version}</b> · {current.author === "agent" ? "written by the agent" : "shipped with the world"}
+                settle.js <b>{settleLabel(current)}</b>
               </span>
             </span>
           </div>
 
           <div className={s.diffCol}>
-            <Diff oldText={oldText} newText={newText} oldLabel={diff ? versionBefore(diff.version, current.version) : current.version} newLabel={diff?.version ?? ""} />
+            <Diff oldText={oldText} newText={newText} oldLabel={diff ? versionBefore(diff.version, current.version) : settleLabel(current)} newLabel={diff?.version ?? ""} />
           </div>
 
           <div className={s.tilesCol}>

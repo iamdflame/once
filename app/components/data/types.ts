@@ -106,10 +106,24 @@ export interface SuiteReport {
 }
 
 export interface Settle {
+  /** The world's deploy counter, as "v7". It keeps counting across resets. */
   version: string;
   source: string;
   author: "shipped" | "agent";
   loaded_at: number;
+  /** The program's file name as the world reports it (v1-naive.js, agent-v8.js, …). */
+  name?: string;
+}
+
+/** "deploy #7" from "v7" (the world's counter), or the tag as is. */
+export function deployTag(version: string | number | undefined | null): string {
+  const n = Number(String(version ?? "").replace(/\D/g, ""));
+  return Number.isFinite(n) && n > 0 ? `deploy #${n}` : String(version ?? "—");
+}
+
+/** What the program is, then which deploy: "v1 (naive) · deploy #7", "agent-written · deploy #8". */
+export function settleLabel(s: Pick<Settle, "version" | "author">): string {
+  return `${s.author === "agent" ? "agent-written" : "v1 (naive)"} · ${deployTag(s.version)}`;
 }
 
 export type AgentEvent =

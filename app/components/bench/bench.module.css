@@ -533,10 +533,26 @@
   }
 
   .statusMeta {
+    flex: 1 1 100%;
+    min-width: 0;
     flex-wrap: wrap;
     gap: 6px 14px;
     order: 3;
     font-size: 12px;
+  }
+
+  .statusMeta > span {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .diff,
+  .log {
+    max-width: 100%;
+  }
+
+  .logLine[data-kind="delta"] {
+    overflow-wrap: anywhere;
   }
 
   .diffBody {
