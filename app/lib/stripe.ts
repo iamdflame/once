@@ -58,6 +58,24 @@ export async function createHoldCheckout(charger: string, origin: string) {
 }
 
 /**
+ * A €50 manual-capture hold created and confirmed server-side with Stripe's test card
+ * (pm_card_visa): the next driver's test hold for the wrong-driver demo. Test mode only
+ * (stripe() refuses live keys); no browser and no Checkout involved.
+ */
+export async function createTestHold(charger: string, driver: string) {
+  return stripe().paymentIntents.create({
+    amount: HOLD.amount,
+    currency: HOLD.currency,
+    capture_method: "manual",
+    payment_method: "pm_card_visa",
+    automatic_payment_methods: { enabled: true, allow_redirects: "never" },
+    confirm: true,
+    description: `Once test hold, driver ${driver}, charger ${charger} (Stripe test mode, pm_card_visa)`,
+    metadata: { app: "once", charger, driver },
+  });
+}
+
+/**
  * The idempotency key for one capture intent: the world's intent id (unique per
  * decision), labelled with the episode. The host's own retries (overlapping ticks, a
  * lease that ran out, a crash between capturing and reporting) replay the same Stripe

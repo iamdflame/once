@@ -15,6 +15,12 @@ export type CaptureIntent = {
   kind?: "capture" | "release";
   status?: string;
   settle_version?: number;
+  /** Whose hold is charged (A, B, ...), and whose energy the decision bills (world/README.md "Drivers"). */
+  driver?: string | null;
+  energy_episode_id?: string | null;
+  energy_driver?: string | null;
+  energy_expected_cents?: number | null;
+  wrong_driver?: boolean | null;
   [k: string]: unknown;
 };
 
@@ -59,6 +65,36 @@ export type SuiteReport = {
   totals: SuiteTotals;
   summary?: string;
   raw?: unknown;
+};
+
+/** A hold as the world reports it (GET /state .holds[], POST /hold). */
+export type WorldHold = {
+  payment_intent: string;
+  charger: string;
+  seq?: number;
+  driver?: string;
+  amount_cents: number;
+  status: string;
+  episode_id?: string | null;
+  episode_ended?: boolean;
+  stranded?: boolean;
+  amount_captured?: number;
+  captured_for?: { episode_id: string | null; driver: string | null; wrong_driver: boolean | null } | null;
+  results?: Record<string, unknown>[];
+  [k: string]: unknown;
+};
+
+export type ProbeCheck = { group: "a" | "b" | "c" | "d"; id: string; label: string; pass: boolean; layer?: string; detail: string; ms: number };
+
+export type WorldProbe = {
+  ok: boolean;
+  ran_at: number;
+  node?: string;
+  platform?: string;
+  checks: ProbeCheck[];
+  env: { names: string[]; flagged: string[] };
+  ms: number;
+  world_uptime_s?: number;
 };
 
 type Init = { method?: string; body?: unknown; text?: string; timeoutMs?: number };
@@ -126,10 +162,10 @@ function arr<T>(x: unknown, ...keys: string[]): T[] {
 
 export const world = {
   health: () => worldFetch("/health", { timeoutMs: 5000 }),
-  state: () => worldFetch("/state"),
+  state: (events?: number) => worldFetch(events !== undefined ? `/state?events=${events}` : "/state"),
   events: (since?: string | number) => worldFetch(`/events${since !== undefined && since !== "" ? `?since=${encodeURIComponent(String(since))}` : ""}`),
   cmd: (body: Record<string, unknown>) => worldFetch("/cmd", { body }),
-  hold: (body: { charger: string; payment_intent: string; amount_cents: number }) => worldFetch("/hold", { body }),
+  hold: (body: { charger: string; payment_intent: string; amount_cents: number; driver?: string }) => worldFetch<{ ok: boolean; hold: WorldHold; existing: boolean }>("/hold", { body }),
 
   /** Pending or in-flight intents (read-only view). */
   async pendingIntents(): Promise<CaptureIntent[]> {
@@ -164,6 +200,12 @@ export const world = {
   trace: (seed: number, source?: string) => worldFetch<{ ok: boolean; report: Record<string, unknown> }>("/suite/trace", { body: { seed, ...(source ? { source } : {}) }, timeoutMs: 60_000 }),
   lastSuite: () => worldFetch<{ ok: boolean; report: unknown }>("/suite/last"),
   reset: (body: { settle?: "v1" } = {}) => worldFetch("/reset", { body }),
+
+  /** The last real agent run, kept inside the sandbox (survives host cold starts). */
+  agentLast: () => worldFetch<{ ok: boolean; run: Record<string, unknown> | null }>("/agent/last"),
+  postAgentLast: (run: Record<string, unknown>) => worldFetch<{ ok: boolean; received_at: number }>("/agent/last", { body: run }),
+  /** The boundary probe, run inside the world (world/src/probe.js). */
+  probe: () => worldFetch<WorldProbe>("/probe", { body: {}, timeoutMs: 30_000 }),
 };
 
 export function normalizeSuite(raw: unknown): SuiteReport {
@@ -183,7 +225,7 @@ export function normalizeSuite(raw: unknown): SuiteReport {
   const r = (raw ?? {}) as Record<string, unknown>;
   return {
     version: (r.settle_version ?? r.version) as number | string | undefined,
-    ran_at: Date.now(),
+    ran_at: typeof r.ran_at === "number" ? r.ran_at : Date.now(),
     summary: typeof r.summary === "string" ? r.summary : undefined,
     scenarios,
     totals: {

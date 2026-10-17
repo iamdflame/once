@@ -22,6 +22,11 @@ export type CaptureRecord = {
   charger: string;
   payment_intent: string;
   amount_cents: number;
+  /** The driver whose hold this charges, and the driver/episode whose energy it bills (from the world). */
+  driver: string | null;
+  energy_driver: string | null;
+  energy_episode_id: string | null;
+  wrong_driver: boolean | null;
   action: "capture" | "release" | "rejected";
   ok: boolean;
   status: string;
@@ -103,6 +108,10 @@ async function executeOne(i: CaptureIntent): Promise<CaptureRecord> {
     charger: String(i?.charger ?? ""),
     payment_intent: String(i?.payment_intent ?? ""),
     amount_cents: Number(i?.amount_cents),
+    driver: i?.driver ?? null,
+    energy_driver: i?.energy_driver ?? null,
+    energy_episode_id: i?.energy_episode_id ?? null,
+    wrong_driver: i?.wrong_driver ?? null,
     action: "capture",
     ok: false,
     status: "error",
