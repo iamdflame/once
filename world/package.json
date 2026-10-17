@@ -11,7 +11,7 @@
   "scripts": {
     "start": "node src/index.js",
     "bundle": "node scripts/bundle.mjs",
-    "test": "node --test test/",
+    "test": "node --test test/*.test.js",
     "suite": "node scripts/suite.mjs"
   },
   "license": "MIT",
