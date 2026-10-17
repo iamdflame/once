@@ -1,0 +1,216 @@
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  gap: 28px;
+  align-items: start;
+}
+
+.plateCol {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* the tariff plate, a faceplate at reading size */
+.plate {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 18px 16px;
+  border-radius: var(--r-plate);
+  background:
+    linear-gradient(165deg, oklch(1 0 0 / 0.7), transparent 45%),
+    var(--enamel);
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.9),
+    inset 0 0 0 1px oklch(0.3 0.02 60 / 0.08),
+    var(--shadow-plate);
+}
+
+.plate::before,
+.plate::after {
+  content: "";
+  position: absolute;
+  bottom: 12px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, oklch(0.95 0 0), oklch(0.7 0.01 80) 60%, oklch(0.55 0.01 80));
+  box-shadow: inset 0 0 0 1px oklch(0.3 0.02 60 / 0.25);
+}
+
+.plate::before {
+  left: 12px;
+}
+
+.plate::after {
+  right: 12px;
+}
+
+.plateTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.stencil {
+  font-weight: 700;
+  font-size: 18px;
+  letter-spacing: 0.18em;
+  color: oklch(0.36 0.02 60);
+  text-shadow: 0 1px 0 oklch(1 0 0 / 0.9);
+}
+
+.led {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--hold-amber);
+  box-shadow:
+    inset 0 1px 1px oklch(1 0 0 / 0.5),
+    0 0 0 2px oklch(0.3 0.02 60 / 0.1),
+    0 0 10px 1px oklch(0.74 0.16 66 / 0.7);
+}
+
+.lcd {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px 10px;
+  border-radius: var(--r-lcd);
+  background:
+    linear-gradient(to bottom, oklch(0 0 0 / 0.35), transparent 30%),
+    var(--lcd);
+  box-shadow:
+    inset 0 2px 4px oklch(0 0 0 / 0.55),
+    inset 0 0 0 1px oklch(0 0 0 / 0.4),
+    0 1px 0 oklch(1 0 0 / 0.7);
+}
+
+.lcdRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.segments {
+  position: relative;
+  display: inline-block;
+  font-family: var(--font-seg);
+  font-weight: 700;
+  font-size: clamp(34px, 5vw, 56px);
+  line-height: 1.1;
+  white-space: pre;
+  letter-spacing: 0.04em;
+}
+
+.ghost {
+  color: var(--lcd-ghost);
+}
+
+.lit {
+  position: absolute;
+  inset: 0;
+  color: var(--segment-amber);
+  text-shadow: 0 0 8px var(--segment-amber-glow);
+}
+
+.unit {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: oklch(0.75 0.03 160);
+  text-align: right;
+}
+
+.lcdLine {
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px solid oklch(1 0 0 / 0.08);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--segment-amber);
+}
+
+.plateNote {
+  padding: 0 4px 10px;
+  font-size: 15px;
+  color: var(--ink-soft);
+  max-width: 60ch;
+}
+
+.rung {
+  padding: 24px 26px 26px;
+  border-radius: 16px;
+  background: oklch(1 0 0 / 0.45);
+  box-shadow: inset 0 0 0 1px oklch(0.3 0.02 60 / 0.1);
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+.rung p + p {
+  margin-top: 10px;
+}
+
+.rungTitle {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  margin-bottom: 10px;
+}
+
+.rungPrice {
+  font-size: 20px;
+  margin-bottom: 8px;
+}
+
+.rungPrice b {
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.est {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-family: var(--font-code);
+  font-size: 11.5px;
+  color: var(--hold-amber-ink);
+  background: oklch(0.95 0.07 72);
+  vertical-align: middle;
+}
+
+.receipt {
+  min-height: 0;
+}
+
+.notes {
+  margin-top: 32px;
+}
+
+@media (max-width: 900px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .segments {
+    font-size: 30px;
+  }
+
+  .rung {
+    padding: 18px 16px 20px;
+  }
+
+  .notes {
+    margin-top: 20px;
+  }
+}

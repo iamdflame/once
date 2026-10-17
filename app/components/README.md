@@ -2,14 +2,18 @@
 
 The product visual is the charger itself. The board is a wall of twelve enamel faceplates on concrete, each with a segment LCD (DSEG7) for kWh and €, a status LED and a cable down to the CSMS rail; a cut link shows a yellow-and-black hazard break in the cable. The ledger is a thermal receipt that prints line by line and links every line to its Stripe object. The agent bench is a worktop with the `settle.js` diff, the model status line and thirty storm tiles that flip green or red.
 
-Pages: `/` the board · `/agent` the bench · `/proof` every capture, the latest storm report, the sandbox settings, how to verify · `/about` the company in five lines and the stack.
+Pages: `/` the board, with the try-it strip (four numbered steps that light as the person completes them; the current step's action sits in the strip, above the fold) · `/agent` the bench · `/proof` holds from the world, every capture with its Stripe id, the run receipt (`/api/receipt`), the latest storm report, the sandbox settings, how to verify · `/status` one breaker panel of asserted outcomes (`/api/status`): world, sandbox, egress, creates, last capture, last suite, Stripe mode; red when the world is unreachable or no suite has run · `/pricing` the tariff plate and the "included" receipt, every number labelled an estimate · `/docs` built from the README, ARCHITECTURE and THREAT_MODEL, the settle.js interface rendered from `lib/settle-interface.ts` · `/security` · `/terms` · `/privacy` · `/about`. The footer is a nameplate: link columns and an equipment rating plate with the stack.
 
 ## Layout
 
 ```
 app/app/            pages (page.tsx, agent/, proof/, about/, not-found.tsx), layout.tsx (fonts, providers), globals.css (tokens, base, buttons)
 components/data/    types.ts · adapter.ts (the WorldAdapter interface) · mock.ts (in-browser world) · live.ts (host API) · provider.tsx (mode, context)
-components/board/   Board (the page) · Wall · Faceplate · Lcd · Controls · CheckoutSheet (mock Checkout) · WireLog
+components/board/   Board (the page) · Guide (the try-it strip) · Wall · Faceplate · Lcd · Controls · CheckoutSheet (mock Checkout) · WireLog
+components/status/  StatusView (the breaker panel)
+components/docs/    Md (a small Markdown renderer for the settle.js interface)
+components/proof/   ProofView · RunReceipt
+components/shell/   Nav · Footer · prose.module.css (the reading pages)
 components/ledger/  Receipt (the thermal strip)
 components/bench/   Bench · Diff (LCS line diff) · Tiles (30 storms)
 components/proof/   ProofView

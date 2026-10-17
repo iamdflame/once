@@ -7,7 +7,7 @@ export default function NotFound() {
         404
       </p>
       <h1 style={{ marginTop: 16, fontSize: "2.2rem" }}>No charger at this address.</h1>
-      <p style={{ marginTop: 12, color: "var(--ink-soft)" }}>The wall has twelve plates and four pages. This is none of them.</p>
+      <p style={{ marginTop: 12, color: "var(--ink-soft)" }}>The wall has twelve plates. This is not one of them, and it is not a page either.</p>
       <p style={{ marginTop: 24 }}>
         <Link href="/" className="btn btn-primary">
           Back to the board

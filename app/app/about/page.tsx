@@ -28,19 +28,27 @@ export default function AboutPage() {
           </div>
           <div className={s.line}>
             <dt>The law</dt>
-            <dd>AFIR (Regulation (EU) 2023/1804, Art. 5) requires ad-hoc payment with a widely used instrument at new public points since 13 April 2024; ≥50 kW points on the TEN-T network comply from 1 January 2027.</dd>
+            <dd>
+              AFIR (Regulation (EU) 2023/1804, Art. 5) requires ad-hoc payment at new public points since 13 April 2024: a card or contactless reader at 50 kW and above, and an internet-based option such as a QR code below that. Existing 50 kW and above points on the TEN-T network comply from
+              1 January 2027.
+            </dd>
           </div>
           <div className={s.line}>
             <dt>The market</dt>
-            <dd>About 1.1 million public charge points in the EU by end 2025, five times 2020 (T&amp;E, 2026). Most operators run well under 500 points on an open-source or white-label CSMS with a payment module and no fault suite.</dd>
+            <dd>About 1.1 million public charge points in the EU by end 2025, five times 2020 (Transport &amp; Environment, July 2026). Open-source CSMSs now ship Stripe payment modules (CitrineOS 1.3.0, July 2024) without a fault suite behind them.</dd>
           </div>
           <div className={s.line}>
             <dt>The price</dt>
-            <dd>€2–5 per public charger per month for the proven settlement module and the storm suite; a conformance runner for CSMS vendors on top. 300k points on small operators is about €11M a year.</dd>
+            <dd>
+              Estimate: €2–5 per public charger per month for the proven settlement module and the storm suite; a conformance runner for CSMS vendors on top. No customers yet; the first job of a pilot is to learn whether those numbers are wrong. Details on the <Link href="/pricing">pricing page</Link>.
+            </dd>
           </div>
           <div className={s.line}>
             <dt>The next step</dt>
-            <dd>A &ldquo;pays exactly once offline&rdquo; certificate: charger makers and CSMS vendors run the shared fault suite and publish the result. The OCA certifies protocol conformance; nobody certifies the money.</dd>
+            <dd>
+              A &ldquo;pays exactly once offline&rdquo; certificate: charger makers and CSMS vendors run the shared fault suite and publish the result. The OCA&apos;s OCTT certifies protocol conformance, Eichrecht covers the meter and EMV/PCI the card; the offline behaviour of the payment code
+              between them is what this would test.
+            </dd>
           </div>
         </dl>
       </section>
@@ -49,7 +57,8 @@ export default function AboutPage() {
         <h2 id="stack-h" className={s.sheetTitle}>The stack</h2>
         <p className={s.stackLine}>
           <b>Stripe Projects</b> provisions the stack and the identity: the CreateOS key, an LLM provider, the deployment. <b>CreateOS</b> runs the world in one sandbox with no egress and no keys: the CSMS, twelve OCPP 1.6J chargers with firmware quirks, the link proxies and the agent&apos;s
-          settlement program. <b>Stripe</b> holds €50 with manual capture through Checkout, captures once per plug-in episode with an idempotency key the host derives from the episode, and refuses anything more. The host is a Next.js app; the model writes code, never decisions.
+          settlement program. <b>Stripe</b> holds €50 with manual capture through Checkout, captures once per plug-in episode with an idempotency key the host derives from the episode, and refuses anything more. The host is a Next.js app; the model writes code, never decisions. The product code
+          started from an empty directory at kickoff; the research and planning happened before.
         </p>
         <ul className={s.facts}>
           <li>

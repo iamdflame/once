@@ -18,6 +18,7 @@ const eslintConfig = [
       "out/**",
       "build/**",
       "next-env.d.ts",
+      "world/**", // the world bundle, copied in by scripts/sync-world.mjs
     ],
   },
 ];
