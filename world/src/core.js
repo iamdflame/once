@@ -46,6 +46,8 @@ export class WorldCore {
     this.pendingHolds = new Map(); // charger -> [hold] (FIFO, bound at the next plug-in)
     this.episodes = [];
     this.episodeCount = new Map();
+    this.holdCount = new Map(); // charger -> holds placed (a hold's seq; driver A, B, ... by default)
+    this.trigger = null; // the feed event settle.js is reacting to (for driver attribution)
     this.intents = new Map(); // world intent id -> intent
     this.intentN = 0;
     this.settle = null;
@@ -68,6 +70,7 @@ export class WorldCore {
       this.chargers.set(id, fw);
       this.pendingHolds.set(id, []);
       this.episodeCount.set(id, 0);
+      this.holdCount.set(id, 0);
     });
 
     if (tickEvery) this.tickTimer = clock.every(tickEvery, () => this.tick());
@@ -105,13 +108,22 @@ export class WorldCore {
     this.feed.push(f);
     if (this.feed.length > this.maxFeed) this.feed.splice(0, this.feed.length - this.maxFeed);
     if (!this.settler) return;
-    this.absorb(this.settler.onEvent(f, f.at), {});
+    this.react(f, () => this.absorb(this.settler.onEvent(f, f.at), {}));
   }
 
   tick() {
     if (!this.settler) return;
     const now = this.clock.now();
-    this.absorb(this.settler.onEvent({ seq: this.seq, at: now, type: 'tick' }, now), {});
+    const f = { seq: this.seq, at: now, type: 'tick' };
+    this.react(f, () => this.absorb(this.settler.onEvent(f, now), {}));
+  }
+
+  // Run fn with `f` as the event settle.js is reacting to, so every intent it emits can be
+  // attributed to the plug-in episode whose energy it bills (see attribute()).
+  react(f, fn) {
+    const prev = this.trigger;
+    this.trigger = f;
+    try { fn(); } finally { this.trigger = prev; }
   }
 
   absorb(res, { replay = false }) {
@@ -133,7 +145,7 @@ export class WorldCore {
     this.settle = { version: this.settleVersion, name, sha256: host.sha, loaded_at: this.clock.now(), source };
     this.emit({ type: 'settle', version: this.settleVersion, name, sha256: host.sha, replayed: replay ? this.feed.length : 0 });
     if (replay) {
-      for (const f of this.feed) this.absorb(host.onEvent(f, f.at), { replay: true });
+      for (const f of this.feed) this.react(f, () => this.absorb(host.onEvent(f, f.at), { replay: true }));
     }
     return this.settle;
   }
@@ -144,6 +156,7 @@ export class WorldCore {
     const hold = pi ? this.holds.get(pi) : null;
     const amount = raw.amount_cents;
     let problem = raw.__invalid || null;
+    const who = this.attribute(hold, this.trigger);
     if (!problem && !hold) problem = pi ? `unknown payment_intent "${pi}" (no hold was placed with it)` : 'intent has no payment_intent';
     if (!problem && !(Number.isInteger(amount) && amount >= 0)) problem = 'amount_cents must be a non-negative integer number of cents';
     const intent = {
@@ -154,6 +167,16 @@ export class WorldCore {
       payment_intent: pi,
       amount_cents: Number.isInteger(amount) ? amount : null,
       kind: amount === 0 ? 'release' : 'capture',
+      // Who pays and whose energy it is: the hold's driver, and the plug-in episode the
+      // decision was made for (by the OCPP message settle.js was reacting to).
+      driver: hold ? hold.driver : null,
+      hold_seq: hold ? hold.seq : null,
+      energy_episode_id: who.episode ? who.episode.id : null,
+      energy_driver: who.episode ? who.episode.driver : null,
+      energy_wh: who.episode ? who.episode.energy_wh : null,
+      energy_expected_cents: who.episode ? this.expectedCents(who.episode) : null,
+      attribution: who.basis,
+      wrong_driver: hold && who.episode ? hold.episode_id !== who.episode.id : null,
       status: problem ? 'rejected' : 'pending',
       error: problem,
       settle_version: this.settleVersion,
@@ -205,7 +228,10 @@ export class WorldCore {
     it.status = result.ok ? 'succeeded' : 'failed';
     const hold = this.holds.get(it.payment_intent);
     if (hold) {
-      hold.results.push({ intent: id, kind: it.kind, amount_cents: it.amount_cents, ok: result.ok, status: result.status, error: result.error });
+      hold.results.push({
+        intent: id, kind: it.kind, amount_cents: it.amount_cents, ok: result.ok, status: result.status, error: result.error,
+        driver: it.driver, energy_episode_id: it.energy_episode_id, energy_driver: it.energy_driver, wrong_driver: it.wrong_driver,
+      });
       const so = stripe_object || {};
       if (result.ok) {
         if (it.kind === 'release') {
@@ -215,6 +241,7 @@ export class WorldCore {
           hold.status = 'succeeded';
           hold.amount_captured = Number.isInteger(so.amount_received) ? so.amount_received : it.amount_cents;
           hold.amount_released = hold.amount_cents - hold.amount_captured;
+          hold.captured_for = { episode_id: it.energy_episode_id, driver: it.energy_driver, wrong_driver: it.wrong_driver };
         }
       } else if (so.status) {
         hold.status = so.status;
@@ -232,24 +259,33 @@ export class WorldCore {
       ok: result.ok,
       status: result.status,
       error: result.error ? result.error.message : null,
+      driver: it.driver,
+      energy_episode_id: it.energy_episode_id,
+      energy_driver: it.energy_driver,
+      wrong_driver: it.wrong_driver,
     });
     return { intent: publicIntent(it), duplicate: false };
   }
 
   // ---------- holds and episodes ----------
 
-  placeHold({ charger, payment_intent, amount_cents, currency = 'eur' }) {
+  placeHold({ charger, payment_intent, amount_cents, currency = 'eur', driver = null }) {
     this.fw(charger);
     if (typeof payment_intent !== 'string' || !payment_intent) throw httpError(400, 'payment_intent must be a non-empty string');
     if (!Number.isInteger(amount_cents) || amount_cents <= 0) throw httpError(400, 'amount_cents must be a positive integer');
+    if (driver != null && !(typeof driver === 'string' && /^[A-Za-z0-9 _.-]{1,24}$/.test(driver))) throw httpError(400, 'driver must be a short label like "A" or "B"');
     const existing = this.holds.get(payment_intent);
     if (existing) {
       if (existing.charger !== charger) throw httpError(409, `payment_intent ${payment_intent} is already bound to ${existing.charger}`);
-      return { hold: publicHold(existing), existing: true };
+      return { hold: this.holdView(existing), existing: true };
     }
+    const seq = this.holdCount.get(charger) + 1;
+    this.holdCount.set(charger, seq);
     const hold = {
       payment_intent,
       charger,
+      seq, // 1 for the first hold on this charger since the last reset
+      driver: driver || driverLetter(seq), // "A", "B", ... unless the host names the driver
       amount_cents,
       currency: String(currency).toLowerCase(),
       placed_at: this.clock.now(),
@@ -258,12 +294,13 @@ export class WorldCore {
       amount_captured: 0,
       amount_released: 0,
       results: [],
+      captured_for: null,
     };
     this.holds.set(payment_intent, hold);
     this.pendingHolds.get(charger).push(hold);
     if (this.authority) this.authority.authorize(payment_intent, amount_cents, hold.currency);
-    this.emit({ type: 'hold', charger, connectorId: 1, payment_intent, amount_cents, currency: hold.currency });
-    return { hold: publicHold(hold), existing: false };
+    this.emit({ type: 'hold', charger, connectorId: 1, payment_intent, amount_cents, currency: hold.currency, driver: hold.driver, hold_seq: seq });
+    return { hold: this.holdView(hold), existing: false };
   }
 
   plug(id, { idTag, powerKw } = {}) {
@@ -279,6 +316,7 @@ export class WorldCore {
       charger: id,
       payment_intent: hold ? hold.payment_intent : null,
       amount_cents: hold ? hold.amount_cents : null,
+      driver: hold ? hold.driver : null,
       plugged_at: this.clock.now(),
       unplugged_at: null,
       power_kw: kw,
@@ -287,7 +325,7 @@ export class WorldCore {
     };
     if (hold) hold.episode_id = ep.id;
     this.episodes.push(ep);
-    this.emit({ type: 'cmd', op: 'plug', charger: id, episode_id: ep.id, payment_intent: ep.payment_intent, power_kw: kw, id_tag: tag });
+    this.emit({ type: 'cmd', op: 'plug', charger: id, episode_id: ep.id, payment_intent: ep.payment_intent, driver: ep.driver, power_kw: kw, id_tag: tag });
     fw.plug({ idTag: tag, powerKw: kw }, ep);
     return ep;
   }
@@ -323,6 +361,44 @@ export class WorldCore {
     fw.setSkew(seconds * 1000);
   }
 
+  episodeById(id) {
+    if (!id) return null;
+    for (let i = this.episodes.length - 1; i >= 0; i--) if (this.episodes[i].id === id) return this.episodes[i];
+    return null;
+  }
+
+  // The plug-in episode whose energy a settlement decision bills. The world knows which
+  // OCPP transaction belongs to which episode (it is the metered truth), so an intent
+  // emitted while settle.js handled a StopTransaction / MeterValues / StartTransaction is
+  // for that transaction's episode. Otherwise (a tick, a status message) it is taken to be
+  // for the episode its hold paid for.
+  attribute(hold, trig) {
+    let txId = null;
+    if (trig && trig.type === 'ocpp') {
+      txId = trig.action === 'StartTransaction' ? trig.response && trig.response.transactionId : trig.payload && trig.payload.transactionId;
+    }
+    if (txId != null && (!hold || hold.charger === trig.charger)) {
+      for (let i = this.episodes.length - 1; i >= 0; i--) {
+        const ep = this.episodes[i];
+        if (ep.charger !== trig.charger) continue;
+        if (ep.transactions.some((t) => t.transactionId === txId || t.localId === txId)) {
+          return { episode: ep, basis: `${trig.action} transactionId ${txId}` };
+        }
+      }
+    }
+    const own = hold ? this.episodeById(hold.episode_id) : null;
+    return own ? { episode: own, basis: 'hold episode' } : { episode: null, basis: null };
+  }
+
+  // A hold as the API shows it, plus whether its episode is over and the hold is stranded
+  // (episode ended, still requires_capture, no intent pending or in flight for it).
+  holdView(h) {
+    const ep = this.episodeById(h.episode_id);
+    const ended = !!(ep && ep.unplugged_at != null);
+    const busy = ended && [...this.intents.values()].some((x) => x.payment_intent === h.payment_intent && (x.status === 'pending' || x.status === 'in_flight'));
+    return { ...publicHold(h), episode_ended: ended, stranded: ended && h.status === 'requires_capture' && !busy };
+  }
+
   expectedCents(ep) {
     if (ep.amount_cents == null) return null;
     return Math.min(ep.amount_cents, Math.round((ep.energy_wh * this.tariffCentsPerKwh) / 1000));
@@ -336,6 +412,7 @@ export class WorldCore {
       charger: ep.charger,
       payment_intent: ep.payment_intent,
       amount_cents: ep.amount_cents,
+      driver: ep.driver,
       plugged_at: ep.plugged_at,
       unplugged_at: ep.unplugged_at,
       power_kw: ep.power_kw,
@@ -363,7 +440,7 @@ export class WorldCore {
         ...s,
         link: this.links.isCut(fw.id) ? 'cut' : 'up',
         episode: ep ? { id: ep.id, payment_intent: ep.payment_intent, energy_wh: ep.energy_wh, cost_cents: Math.round((ep.energy_wh * this.tariffCentsPerKwh) / 1000), plugged_at: ep.plugged_at } : null,
-        next_hold: next ? { payment_intent: next.payment_intent, amount_cents: next.amount_cents } : null,
+        next_hold: next ? { payment_intent: next.payment_intent, amount_cents: next.amount_cents, driver: next.driver } : null,
       };
     });
     return {
@@ -373,7 +450,7 @@ export class WorldCore {
       settle: this.settle ? { version: this.settle.version, name: this.settle.name, sha256: this.settle.sha256, loaded_at: this.settle.loaded_at, errors: this.settlerErrors, dead: this.settler ? this.settler.dead : null } : null,
       chargers,
       episodes: this.episodes.slice(-100).map((e) => this.episodeView(e)),
-      holds: [...this.holds.values()].slice(-200).map(publicHold),
+      holds: [...this.holds.values()].slice(-200).map((h) => this.holdView(h)),
       intents: [...this.intents.values()].slice(-200).map(publicIntent),
       last_seq: this.seq,
       events: this.events.slice(-events),
@@ -409,7 +486,14 @@ export function publicIntent(it) {
 }
 
 export function publicHold(h) {
-  return { ...h, results: h.results.slice() };
+  return { ...h, results: h.results.slice(), captured_for: h.captured_for ? { ...h.captured_for } : null };
+}
+
+// 1 -> "A", 2 -> "B", ..., 26 -> "Z", 27 -> "AA"
+export function driverLetter(n) {
+  let s = '';
+  for (let k = n; k > 0; k = Math.floor((k - 1) / 26)) s = String.fromCharCode(65 + ((k - 1) % 26)) + s;
+  return s || 'A';
 }
 
 function normError(error) {

@@ -2266,7 +2266,7 @@ var require_websocket = __commonJS({
     var EventEmitter = require("events");
     var https = require("https");
     var http2 = require("http");
-    var net2 = require("net");
+    var net3 = require("net");
     var tls = require("tls");
     var { randomBytes, createHash } = require("crypto");
     var { Duplex, Readable } = require("stream");
@@ -3023,12 +3023,12 @@ var require_websocket = __commonJS({
     }
     function netConnect(options) {
       options.path = options.socketPath;
-      return net2.connect(options);
+      return net3.connect(options);
     }
     function tlsConnect(options) {
       options.path = void 0;
       if (!options.servername && options.servername !== "") {
-        options.servername = net2.isIP(options.host) ? "" : options.host;
+        options.servername = net3.isIP(options.host) ? "" : options.host;
       }
       return tls.connect(options);
     }
@@ -8348,8 +8348,8 @@ var require_uri_all = __commonJS({
             wsComponents.secure = void 0;
           }
           if (wsComponents.resourceName) {
-            var _wsComponents$resourc = wsComponents.resourceName.split("?"), _wsComponents$resourc2 = slicedToArray(_wsComponents$resourc, 2), path = _wsComponents$resourc2[0], query = _wsComponents$resourc2[1];
-            wsComponents.path = path && path !== "/" ? path : void 0;
+            var _wsComponents$resourc = wsComponents.resourceName.split("?"), _wsComponents$resourc2 = slicedToArray(_wsComponents$resourc, 2), path2 = _wsComponents$resourc2[0], query = _wsComponents$resourc2[1];
+            wsComponents.path = path2 && path2 !== "/" ? path2 : void 0;
             wsComponents.query = query;
             wsComponents.resourceName = void 0;
           }
@@ -11462,12 +11462,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats(ajv, list, fs, exportName) {
+    function addFormats(ajv, list, fs2, exportName) {
       var _a;
       var _b;
       (_a = (_b = ajv.opts.code).formats) !== null && _a !== void 0 ? _a : _b.formats = codegen_1._`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs[f]);
+        ajv.addFormat(f, fs2[f]);
     }
     module2.exports = exports2 = formatsPlugin;
     Object.defineProperty(exports2, "__esModule", { value: true });
@@ -50324,6 +50324,8 @@ var require_ocpp_rpc = __commonJS({
 
 // src/live.js
 var import_node_http = __toESM(require("node:http"), 1);
+var import_node_fs = __toESM(require("node:fs"), 1);
+var import_node_path = __toESM(require("node:path"), 1);
 var import_ocpp_rpc2 = __toESM(require_ocpp_rpc(), 1);
 
 // src/clock.js
@@ -50461,15 +50463,15 @@ var Csms = class {
     this.emit({ type: "link", charger, state: "disconnected" });
   }
   handle(charger, action, payload) {
-    const now = iso(this.clock.now());
+    const now2 = iso(this.clock.now());
     let response;
     switch (action) {
       case "BootNotification":
         this._session(charger).boots++;
-        response = { status: "Accepted", currentTime: now, interval: this.heartbeatIntervalS };
+        response = { status: "Accepted", currentTime: now2, interval: this.heartbeatIntervalS };
         break;
       case "Heartbeat":
-        response = { currentTime: now };
+        response = { currentTime: now2 };
         break;
       case "StatusNotification":
         response = {};
@@ -50605,9 +50607,9 @@ var Firmware = class {
   }
   // ---------- physics ----------
   accrue() {
-    const now = this.clock.now();
+    const now2 = this.clock.now();
     if (this.power && this.tx && !this.tx.suspended && this.plugged && this.car) {
-      const dt = Math.max(0, now - this.lastAccrue);
+      const dt = Math.max(0, now2 - this.lastAccrue);
       this.fracWh += this.car.powerKw * dt / 3600;
       const whole = Math.floor(this.fracWh);
       if (whole > 0) {
@@ -50617,7 +50619,7 @@ var Firmware = class {
         if (this.episode) this.episode.energy_wh += whole;
       }
     }
-    this.lastAccrue = now;
+    this.lastAccrue = now2;
   }
   reading() {
     this.accrue();
@@ -50812,13 +50814,13 @@ var Firmware = class {
   }
   startTransaction() {
     this.accrue();
-    const now = this.clock.now();
+    const now2 = this.clock.now();
     const tx = {
       localId: this.localTxBase + this.nextLocalTx++,
       transactionId: null,
       idTag: this.car.idTag,
       meterStart: this.regWh,
-      startedAt: now,
+      startedAt: now2,
       energyWh: 0,
       startLost: !!this.quirks.stop_without_start,
       suspended: false,
@@ -50830,7 +50832,7 @@ var Firmware = class {
     if (tx.startLost) {
       this.log("start-lost", { localId: tx.localId });
     } else {
-      this.enqueue("StartTransaction", { connectorId: 1, idTag: tx.idTag, meterStart: tx.meterStart, timestamp: this.ts(now) }, { tx });
+      this.enqueue("StartTransaction", { connectorId: 1, idTag: tx.idTag, meterStart: tx.meterStart, timestamp: this.ts(now2) }, { tx });
     }
     this.setStatus("Charging");
     this._startSampling();
@@ -50854,15 +50856,15 @@ var Firmware = class {
     const tx = this.tx;
     if (!tx) return;
     this.accrue();
-    const now = this.clock.now();
+    const now2 = this.clock.now();
     const meterStop = this.regWh;
     const transactionData = [
       { timestamp: this.ts(tx.startedAt), sampledValue: [{ value: String(tx.meterStart), context: "Transaction.Begin", format: "Raw", measurand: REG, location: "Outlet", unit: "Wh" }] },
       ...tx.interruptions.map((i) => ({ timestamp: this.ts(i.at), sampledValue: [{ value: String(i.value), context: i.context, format: "Raw", measurand: REG, location: "Outlet", unit: "Wh" }] })),
-      { timestamp: this.ts(now), sampledValue: [{ value: String(meterStop), context: "Transaction.End", format: "Raw", measurand: REG, location: "Outlet", unit: "Wh" }] }
+      { timestamp: this.ts(now2), sampledValue: [{ value: String(meterStop), context: "Transaction.End", format: "Raw", measurand: REG, location: "Outlet", unit: "Wh" }] }
     ];
-    this.enqueue("StopTransaction", { transactionId: null, idTag: tx.idTag, meterStop, timestamp: this.ts(now), reason, transactionData }, { tx, force });
-    tx.stoppedAt = now;
+    this.enqueue("StopTransaction", { transactionId: null, idTag: tx.idTag, meterStop, timestamp: this.ts(now2), reason, transactionData }, { tx, force });
+    tx.stoppedAt = now2;
     tx.meterStop = meterStop;
     tx.reason = reason;
     this.tx = null;
@@ -51066,7 +51068,7 @@ return {
 }
 var SettlerHost = class {
   // Throws SettleLoadError with a message a model can act on.
-  constructor(source, { tariffCentsPerKwh = 60, seed = 1, now = 0, timeoutMs = CALL_TIMEOUT_MS } = {}) {
+  constructor(source, { tariffCentsPerKwh = 60, seed = 1, now: now2 = 0, timeoutMs = CALL_TIMEOUT_MS } = {}) {
     this.source = source;
     this.sha = sha256(source);
     this.timeoutMs = timeoutMs;
@@ -51088,7 +51090,7 @@ var SettlerHost = class {
       if (e instanceof SettleLoadError) throw e;
       throw new SettleLoadError(`settle.js does not parse: ${e.message}`);
     }
-    this.ctx.__now = now;
+    this.ctx.__now = now2;
     try {
       const holder = code.runInContext(this.ctx, { timeout: timeoutMs });
       this.ctx.__holder = holder;
@@ -51117,17 +51119,17 @@ var SettlerHost = class {
     if (problem) throw new SettleLoadError(String(problem));
   }
   // Deliver one event; returns { intents: [new raw intents], logs, error }.
-  onEvent(evt, now) {
-    return this._call(JSON.stringify(evt), now);
+  onEvent(evt, now2) {
+    return this._call(JSON.stringify(evt), now2);
   }
   // Read intents() without delivering an event.
-  poll(now) {
-    return this._call(null, now);
+  poll(now2) {
+    return this._call(null, now2);
   }
-  _call(json, now) {
+  _call(json, now2) {
     if (this.dead) return { intents: [], logs: [], error: this.dead };
     this.ctx.__in = json;
-    this.ctx.__now = Number.isFinite(now) ? now : 0;
+    this.ctx.__now = Number.isFinite(now2) ? now2 : 0;
     let res;
     try {
       res = JSON.parse(CALL.runInContext(this.ctx, { timeout: this.timeoutMs }));
@@ -51210,6 +51212,8 @@ var WorldCore = class {
     this.pendingHolds = /* @__PURE__ */ new Map();
     this.episodes = [];
     this.episodeCount = /* @__PURE__ */ new Map();
+    this.holdCount = /* @__PURE__ */ new Map();
+    this.trigger = null;
     this.intents = /* @__PURE__ */ new Map();
     this.intentN = 0;
     this.settle = null;
@@ -51231,6 +51235,7 @@ var WorldCore = class {
       this.chargers.set(id, fw);
       this.pendingHolds.set(id, []);
       this.episodeCount.set(id, 0);
+      this.holdCount.set(id, 0);
     });
     if (tickEvery) this.tickTimer = clock.every(tickEvery, () => this.tick());
   }
@@ -51267,12 +51272,24 @@ var WorldCore = class {
     this.feed.push(f);
     if (this.feed.length > this.maxFeed) this.feed.splice(0, this.feed.length - this.maxFeed);
     if (!this.settler) return;
-    this.absorb(this.settler.onEvent(f, f.at), {});
+    this.react(f, () => this.absorb(this.settler.onEvent(f, f.at), {}));
   }
   tick() {
     if (!this.settler) return;
-    const now = this.clock.now();
-    this.absorb(this.settler.onEvent({ seq: this.seq, at: now, type: "tick" }, now), {});
+    const now2 = this.clock.now();
+    const f = { seq: this.seq, at: now2, type: "tick" };
+    this.react(f, () => this.absorb(this.settler.onEvent(f, now2), {}));
+  }
+  // Run fn with `f` as the event settle.js is reacting to, so every intent it emits can be
+  // attributed to the plug-in episode whose energy it bills (see attribute()).
+  react(f, fn) {
+    const prev = this.trigger;
+    this.trigger = f;
+    try {
+      fn();
+    } finally {
+      this.trigger = prev;
+    }
   }
   absorb(res, { replay = false }) {
     if (!res) return;
@@ -51291,7 +51308,7 @@ var WorldCore = class {
     this.settle = { version: this.settleVersion, name, sha256: host.sha, loaded_at: this.clock.now(), source };
     this.emit({ type: "settle", version: this.settleVersion, name, sha256: host.sha, replayed: replay ? this.feed.length : 0 });
     if (replay) {
-      for (const f of this.feed) this.absorb(host.onEvent(f, f.at), { replay: true });
+      for (const f of this.feed) this.react(f, () => this.absorb(host.onEvent(f, f.at), { replay: true }));
     }
     return this.settle;
   }
@@ -51301,6 +51318,7 @@ var WorldCore = class {
     const hold = pi ? this.holds.get(pi) : null;
     const amount = raw.amount_cents;
     let problem = raw.__invalid || null;
+    const who = this.attribute(hold, this.trigger);
     if (!problem && !hold) problem = pi ? `unknown payment_intent "${pi}" (no hold was placed with it)` : "intent has no payment_intent";
     if (!problem && !(Number.isInteger(amount) && amount >= 0)) problem = "amount_cents must be a non-negative integer number of cents";
     const intent = {
@@ -51311,6 +51329,16 @@ var WorldCore = class {
       payment_intent: pi,
       amount_cents: Number.isInteger(amount) ? amount : null,
       kind: amount === 0 ? "release" : "capture",
+      // Who pays and whose energy it is: the hold's driver, and the plug-in episode the
+      // decision was made for (by the OCPP message settle.js was reacting to).
+      driver: hold ? hold.driver : null,
+      hold_seq: hold ? hold.seq : null,
+      energy_episode_id: who.episode ? who.episode.id : null,
+      energy_driver: who.episode ? who.episode.driver : null,
+      energy_wh: who.episode ? who.episode.energy_wh : null,
+      energy_expected_cents: who.episode ? this.expectedCents(who.episode) : null,
+      attribution: who.basis,
+      wrong_driver: hold && who.episode ? hold.episode_id !== who.episode.id : null,
       status: problem ? "rejected" : "pending",
       error: problem,
       settle_version: this.settleVersion,
@@ -51362,7 +51390,18 @@ var WorldCore = class {
     it.status = result.ok ? "succeeded" : "failed";
     const hold = this.holds.get(it.payment_intent);
     if (hold) {
-      hold.results.push({ intent: id, kind: it.kind, amount_cents: it.amount_cents, ok: result.ok, status: result.status, error: result.error });
+      hold.results.push({
+        intent: id,
+        kind: it.kind,
+        amount_cents: it.amount_cents,
+        ok: result.ok,
+        status: result.status,
+        error: result.error,
+        driver: it.driver,
+        energy_episode_id: it.energy_episode_id,
+        energy_driver: it.energy_driver,
+        wrong_driver: it.wrong_driver
+      });
       const so = stripe_object || {};
       if (result.ok) {
         if (it.kind === "release") {
@@ -51372,6 +51411,7 @@ var WorldCore = class {
           hold.status = "succeeded";
           hold.amount_captured = Number.isInteger(so.amount_received) ? so.amount_received : it.amount_cents;
           hold.amount_released = hold.amount_cents - hold.amount_captured;
+          hold.captured_for = { episode_id: it.energy_episode_id, driver: it.energy_driver, wrong_driver: it.wrong_driver };
         }
       } else if (so.status) {
         hold.status = so.status;
@@ -51388,23 +51428,34 @@ var WorldCore = class {
       amount_cents: it.amount_cents,
       ok: result.ok,
       status: result.status,
-      error: result.error ? result.error.message : null
+      error: result.error ? result.error.message : null,
+      driver: it.driver,
+      energy_episode_id: it.energy_episode_id,
+      energy_driver: it.energy_driver,
+      wrong_driver: it.wrong_driver
     });
     return { intent: publicIntent(it), duplicate: false };
   }
   // ---------- holds and episodes ----------
-  placeHold({ charger, payment_intent, amount_cents, currency = "eur" }) {
+  placeHold({ charger, payment_intent, amount_cents, currency = "eur", driver = null }) {
     this.fw(charger);
     if (typeof payment_intent !== "string" || !payment_intent) throw httpError(400, "payment_intent must be a non-empty string");
     if (!Number.isInteger(amount_cents) || amount_cents <= 0) throw httpError(400, "amount_cents must be a positive integer");
+    if (driver != null && !(typeof driver === "string" && /^[A-Za-z0-9 _.-]{1,24}$/.test(driver))) throw httpError(400, 'driver must be a short label like "A" or "B"');
     const existing = this.holds.get(payment_intent);
     if (existing) {
       if (existing.charger !== charger) throw httpError(409, `payment_intent ${payment_intent} is already bound to ${existing.charger}`);
-      return { hold: publicHold(existing), existing: true };
+      return { hold: this.holdView(existing), existing: true };
     }
+    const seq = this.holdCount.get(charger) + 1;
+    this.holdCount.set(charger, seq);
     const hold = {
       payment_intent,
       charger,
+      seq,
+      // 1 for the first hold on this charger since the last reset
+      driver: driver || driverLetter(seq),
+      // "A", "B", ... unless the host names the driver
       amount_cents,
       currency: String(currency).toLowerCase(),
       placed_at: this.clock.now(),
@@ -51412,13 +51463,14 @@ var WorldCore = class {
       status: "requires_capture",
       amount_captured: 0,
       amount_released: 0,
-      results: []
+      results: [],
+      captured_for: null
     };
     this.holds.set(payment_intent, hold);
     this.pendingHolds.get(charger).push(hold);
     if (this.authority) this.authority.authorize(payment_intent, amount_cents, hold.currency);
-    this.emit({ type: "hold", charger, connectorId: 1, payment_intent, amount_cents, currency: hold.currency });
-    return { hold: publicHold(hold), existing: false };
+    this.emit({ type: "hold", charger, connectorId: 1, payment_intent, amount_cents, currency: hold.currency, driver: hold.driver, hold_seq: seq });
+    return { hold: this.holdView(hold), existing: false };
   }
   plug(id, { idTag, powerKw } = {}) {
     const fw = this.fw(id);
@@ -51433,6 +51485,7 @@ var WorldCore = class {
       charger: id,
       payment_intent: hold ? hold.payment_intent : null,
       amount_cents: hold ? hold.amount_cents : null,
+      driver: hold ? hold.driver : null,
       plugged_at: this.clock.now(),
       unplugged_at: null,
       power_kw: kw,
@@ -51441,7 +51494,7 @@ var WorldCore = class {
     };
     if (hold) hold.episode_id = ep.id;
     this.episodes.push(ep);
-    this.emit({ type: "cmd", op: "plug", charger: id, episode_id: ep.id, payment_intent: ep.payment_intent, power_kw: kw, id_tag: tag });
+    this.emit({ type: "cmd", op: "plug", charger: id, episode_id: ep.id, payment_intent: ep.payment_intent, driver: ep.driver, power_kw: kw, id_tag: tag });
     fw.plug({ idTag: tag, powerKw: kw }, ep);
     return ep;
   }
@@ -51482,6 +51535,41 @@ var WorldCore = class {
     if (!Number.isFinite(seconds)) throw httpError(400, "seconds must be a number");
     fw.setSkew(seconds * 1e3);
   }
+  episodeById(id) {
+    if (!id) return null;
+    for (let i = this.episodes.length - 1; i >= 0; i--) if (this.episodes[i].id === id) return this.episodes[i];
+    return null;
+  }
+  // The plug-in episode whose energy a settlement decision bills. The world knows which
+  // OCPP transaction belongs to which episode (it is the metered truth), so an intent
+  // emitted while settle.js handled a StopTransaction / MeterValues / StartTransaction is
+  // for that transaction's episode. Otherwise (a tick, a status message) it is taken to be
+  // for the episode its hold paid for.
+  attribute(hold, trig) {
+    let txId = null;
+    if (trig && trig.type === "ocpp") {
+      txId = trig.action === "StartTransaction" ? trig.response && trig.response.transactionId : trig.payload && trig.payload.transactionId;
+    }
+    if (txId != null && (!hold || hold.charger === trig.charger)) {
+      for (let i = this.episodes.length - 1; i >= 0; i--) {
+        const ep = this.episodes[i];
+        if (ep.charger !== trig.charger) continue;
+        if (ep.transactions.some((t) => t.transactionId === txId || t.localId === txId)) {
+          return { episode: ep, basis: `${trig.action} transactionId ${txId}` };
+        }
+      }
+    }
+    const own = hold ? this.episodeById(hold.episode_id) : null;
+    return own ? { episode: own, basis: "hold episode" } : { episode: null, basis: null };
+  }
+  // A hold as the API shows it, plus whether its episode is over and the hold is stranded
+  // (episode ended, still requires_capture, no intent pending or in flight for it).
+  holdView(h) {
+    const ep = this.episodeById(h.episode_id);
+    const ended = !!(ep && ep.unplugged_at != null);
+    const busy = ended && [...this.intents.values()].some((x) => x.payment_intent === h.payment_intent && (x.status === "pending" || x.status === "in_flight"));
+    return { ...publicHold(h), episode_ended: ended, stranded: ended && h.status === "requires_capture" && !busy };
+  }
   expectedCents(ep) {
     if (ep.amount_cents == null) return null;
     return Math.min(ep.amount_cents, Math.round(ep.energy_wh * this.tariffCentsPerKwh / 1e3));
@@ -51493,6 +51581,7 @@ var WorldCore = class {
       charger: ep.charger,
       payment_intent: ep.payment_intent,
       amount_cents: ep.amount_cents,
+      driver: ep.driver,
       plugged_at: ep.plugged_at,
       unplugged_at: ep.unplugged_at,
       power_kw: ep.power_kw,
@@ -51510,7 +51599,7 @@ var WorldCore = class {
     };
   }
   state({ events = 100 } = {}) {
-    const now = this.clock.now();
+    const now2 = this.clock.now();
     const chargers = [...this.chargers.values()].map((fw) => {
       const s = fw.snapshot();
       const ep = fw.episode;
@@ -51519,17 +51608,17 @@ var WorldCore = class {
         ...s,
         link: this.links.isCut(fw.id) ? "cut" : "up",
         episode: ep ? { id: ep.id, payment_intent: ep.payment_intent, energy_wh: ep.energy_wh, cost_cents: Math.round(ep.energy_wh * this.tariffCentsPerKwh / 1e3), plugged_at: ep.plugged_at } : null,
-        next_hold: next ? { payment_intent: next.payment_intent, amount_cents: next.amount_cents } : null
+        next_hold: next ? { payment_intent: next.payment_intent, amount_cents: next.amount_cents, driver: next.driver } : null
       };
     });
     return {
-      now,
-      now_iso: new Date(now).toISOString(),
+      now: now2,
+      now_iso: new Date(now2).toISOString(),
       tariff_cents_per_kwh: this.tariffCentsPerKwh,
       settle: this.settle ? { version: this.settle.version, name: this.settle.name, sha256: this.settle.sha256, loaded_at: this.settle.loaded_at, errors: this.settlerErrors, dead: this.settler ? this.settler.dead : null } : null,
       chargers,
       episodes: this.episodes.slice(-100).map((e) => this.episodeView(e)),
-      holds: [...this.holds.values()].slice(-200).map(publicHold),
+      holds: [...this.holds.values()].slice(-200).map((h) => this.holdView(h)),
       intents: [...this.intents.values()].slice(-200).map(publicIntent),
       last_seq: this.seq,
       events: this.events.slice(-events)
@@ -51569,7 +51658,12 @@ function publicIntent(it) {
   return { ...rest };
 }
 function publicHold(h) {
-  return { ...h, results: h.results.slice() };
+  return { ...h, results: h.results.slice(), captured_for: h.captured_for ? { ...h.captured_for } : null };
+}
+function driverLetter(n) {
+  let s = "";
+  for (let k = n; k > 0; k = Math.floor((k - 1) / 26)) s = String.fromCharCode(65 + (k - 1) % 26) + s;
+  return s || "A";
 }
 function normError(error) {
   if (error == null || error === false) return null;
@@ -51645,10 +51739,10 @@ var LinkProxy = class {
   }
 };
 var LiveTransport = class {
-  constructor({ proxies, path = "/ocpp", onViolation = () => {
+  constructor({ proxies, path: path2 = "/ocpp", onViolation = () => {
   } }) {
     this.proxies = proxies;
-    this.path = path;
+    this.path = path2;
     this.onViolation = onViolation;
   }
   async open(id) {
@@ -51806,8 +51900,8 @@ var VirtualNet = class {
   }
 };
 var VirtualConn = class {
-  constructor(net2, id, link) {
-    this.net = net2;
+  constructor(net3, id, link) {
+    this.net = net3;
     this.id = id;
     this.link = link;
     this.alive = true;
@@ -51835,16 +51929,16 @@ var VirtualConn = class {
       }
       const msg = clone(payload);
       this.pending.add(reject);
-      const net2 = this.net;
-      net2.clock.after(net2.lat(), () => {
+      const net3 = this.net;
+      net3.clock.after(net3.lat(), () => {
         if (!this.alive) return;
         let resp;
         try {
-          resp = net2.csms.handle(this.id, action, msg);
+          resp = net3.csms.handle(this.id, action, msg);
           validate16("conf", action, resp);
         } catch (e) {
-          if (!e.rpcErrorCode) net2.onViolation({ charger: this.id, action, kind: "conf", error: e.message });
-          net2.clock.after(net2.lat(), () => {
+          if (!e.rpcErrorCode) net3.onViolation({ charger: this.id, action, kind: "conf", error: e.message });
+          net3.clock.after(net3.lat(), () => {
             if (!this.alive) return;
             this.pending.delete(reject);
             reject(e.rpcErrorCode ? e : Object.assign(new Error(e.message), { rpcErrorCode: "InternalError" }));
@@ -51858,7 +51952,7 @@ var VirtualConn = class {
           return;
         }
         const answer = clone(resp);
-        net2.clock.after(net2.lat(), () => {
+        net3.clock.after(net3.lat(), () => {
           if (!this.alive) return;
           this.pending.delete(reject);
           resolve(answer);
@@ -52232,8 +52326,8 @@ async function runScenario(seedOrScenario, source, { tariffCentsPerKwh = 60, tra
   const clock = new VirtualClock(T0);
   const authority = new PaymentAuthority();
   const violations = [];
-  let net2 = null;
-  const links = { cut: (id) => net2.cut(id), restore: (id) => net2.restore(id), isCut: (id) => net2.isCut(id) };
+  let net3 = null;
+  const links = { cut: (id) => net3.cut(id), restore: (id) => net3.restore(id), isCut: (id) => net3.isCut(id) };
   const byId = new Map(sc.chargers.map((c) => [c.id, c]));
   const core = new WorldCore({
     clock,
@@ -52253,8 +52347,8 @@ async function runScenario(seedOrScenario, source, { tariffCentsPerKwh = 60, tra
     heartbeatIntervalS: 900,
     maxEvents: 1e6
   });
-  net2 = new VirtualNet({ clock, rng: new Rng(sc.seed * 7919 + 17 >>> 0), csms: core.csms, onViolation: (v) => violations.push(v) });
-  core.setTransport(net2);
+  net3 = new VirtualNet({ clock, rng: new Rng(sc.seed * 7919 + 17 >>> 0), csms: core.csms, onViolation: (v) => violations.push(v) });
+  core.setTransport(net3);
   let error = null;
   try {
     core.loadSettler(source, { name: "settle.js" });
@@ -52267,7 +52361,7 @@ async function runScenario(seedOrScenario, source, { tariffCentsPerKwh = 60, tra
     for (const a of sc.actions) {
       clock.after(a.at, () => {
         try {
-          applyAction(core, net2, a);
+          applyAction(core, net3, a);
         } catch (e) {
           generatorErrors.push(`${a.op} ${a.charger} @${Math.round(a.at / 1e3)}s: ${e.message}`);
         }
@@ -52301,7 +52395,7 @@ function pick(o, keys) {
   for (const k of keys) if (o[k] !== void 0) out[k] = o[k];
   return out;
 }
-function applyAction(core, net2, a) {
+function applyAction(core, net3, a) {
   switch (a.op) {
     case "hold":
       core.placeHold({ charger: a.charger, payment_intent: a.payment_intent, amount_cents: a.amount_cents });
@@ -52328,7 +52422,7 @@ function applyAction(core, net2, a) {
       core.setSkew(a.charger, a.seconds);
       break;
     case "lose_ack":
-      net2.loseAck(a.charger, a.action, 1);
+      net3.loseAck(a.charger, a.action, 1);
       break;
     default:
       throw new Error(`unknown op ${a.op}`);
@@ -52430,6 +52524,174 @@ async function runSuite({ source, count = DEFAULT_SUITE_COUNT, seed = DEFAULT_SU
 var V1_NAIVE_NAME = "v1-naive.js";
 var V1_NAIVE_SOURCE = "// settle.js v1 (naive): capture on every StopTransaction.\n//\n// This is the code most CSMS payment modules start with: when a StopTransaction\n// arrives, bill meterStop - meterStart for that transactionId against the charger's\n// latest hold. It is wrong in exactly the ways real chargers expose:\n//   - a StopTransaction delivered twice (dup_stop, lost acknowledgements) captures twice;\n//   - a reboot that splits one plug-in into two transactions captures twice;\n//   - a Stop for a never-seen Start bills from meter 0 (the lifetime register);\n//   - a Stop that arrives after the next driver paid lands on the wrong hold.\n\nexport function createSettler({ tariffCentsPerKwh }) {\n  const holdByCharger = new Map(); // charger -> latest hold event\n  const meterStart = new Map(); // transactionId -> meterStart\n  const out = [];\n\n  return {\n    onEvent(evt) {\n      if (evt.type === 'hold') {\n        holdByCharger.set(evt.charger, evt);\n        return;\n      }\n      if (evt.type !== 'ocpp') return;\n\n      if (evt.action === 'StartTransaction') {\n        meterStart.set(evt.response.transactionId, evt.payload.meterStart);\n        return;\n      }\n\n      if (evt.action === 'StopTransaction') {\n        const hold = holdByCharger.get(evt.charger);\n        if (!hold) return;\n        const txId = evt.payload.transactionId;\n        const wh = evt.payload.meterStop - (meterStart.get(txId) ?? 0);\n        const cents = Math.max(0, Math.min(hold.amount_cents, Math.round((wh * tariffCentsPerKwh) / 1000)));\n        out.push({\n          intent_id: `stop-${evt.seq}`,\n          episode_id: `tx-${txId}`,\n          charger: evt.charger,\n          payment_intent: hold.payment_intent,\n          amount_cents: cents,\n        });\n      }\n    },\n\n    intents() {\n      return out;\n    },\n  };\n}\n";
 
+// src/probe.js
+var import_node_net2 = __toESM(require("node:net"), 1);
+var import_node_dns = __toESM(require("node:dns"), 1);
+function probeSource(attempt) {
+  return `export function createSettler() {
+  const out = [];
+  let async = null;
+  let tried = false;
+  return {
+    onEvent(evt) {
+      if (tried) {
+        if (async) out.push({ intent_id: 'async', outcome: async });
+        return;
+      }
+      tried = true;
+      try {
+        const v = (function () { ${attempt} })();
+        if (v && typeof v.then === 'function') {
+          v.then((x) => { async = 'reached: ' + String(x).slice(0, 120); }, (e) => { async = 'blocked: ' + String((e && e.name) || 'Error') + ': ' + String((e && e.message) || e).slice(0, 160); });
+          out.push({ intent_id: 'sync', outcome: 'pending' });
+        } else {
+          out.push({ intent_id: 'sync', outcome: 'reached: ' + String(typeof v === 'object' ? JSON.stringify(v) : v).slice(0, 120) });
+        }
+      } catch (e) {
+        out.push({ intent_id: 'sync', outcome: 'blocked: ' + String((e && e.name) || 'Error') + ': ' + String((e && e.message) || e).slice(0, 160) });
+      }
+    },
+    intents() { return out; },
+  };
+}
+`;
+}
+var VM_CHECKS = [
+  { id: "fetch", label: "settle.js calls fetch('https://api.stripe.com/v1/charges')", attempt: "return fetch('https://api.stripe.com/v1/charges');" },
+  { id: "require-literal", label: "settle.js contains require('fs')", attempt: "return require('fs').readFileSync('/etc/hostname', 'utf8');" },
+  { id: "require-hidden", label: "settle.js reaches for require indirectly (globalThis['req' + 'uire']('fs'))", attempt: "const r = globalThis['req' + 'uire']; return r('fs').readFileSync('/etc/hostname', 'utf8');" },
+  { id: "process-env", label: "settle.js reads process.env", attempt: "return Object.keys(process.env).length;" },
+  { id: "import", label: "settle.js calls import('node:fs') (hidden from the loader's pattern)", attempt: "return import/**/('node:fs');" },
+  { id: "eval", label: "settle.js calls eval('1 + 1')", attempt: "return eval('1 + 1');" },
+  { id: "function-escape", label: "settle.js tries the vm escape ({}).constructor.constructor('return process')()", attempt: "return ({}).constructor.constructor('return process')().env;" }
+];
+var now = () => Number(process.hrtime.bigint() / 1000n) / 1e3;
+function runVmCheck(c) {
+  const t0 = now();
+  let host;
+  try {
+    host = new SettlerHost(probeSource(c.attempt), { tariffCentsPerKwh: 60 });
+  } catch (e) {
+    const ms2 = now() - t0;
+    const msg = e instanceof SettleLoadError ? e.message : String(e && e.message || e);
+    return { group: "a", id: c.id, label: c.label, pass: true, layer: "loader", detail: `refused before it ran: ${msg}`, ms: ms2 };
+  }
+  const r1 = host.onEvent({ seq: 1, at: 0, type: "tick" }, 0);
+  const r2 = host.onEvent({ seq: 2, at: 0, type: "tick" }, 0);
+  const ms = now() - t0;
+  const all = [...r1.intents, ...r2.intents];
+  const sync = all.find((i) => i.intent_id === "sync");
+  const asyncOut = all.find((i) => i.intent_id === "async");
+  let outcome = sync ? String(sync.outcome) : host.dead || r1.error || "no outcome";
+  if (outcome === "pending") outcome = asyncOut ? String(asyncOut.outcome) : "blocked: the promise never settled inside the vm";
+  const pass = /^blocked:/.test(outcome) || !sync && !!host.dead;
+  return { group: "a", id: c.id, label: c.label, pass, layer: "vm", detail: outcome, ms };
+}
+function runLoopCheck() {
+  const src = `export function createSettler() {
+  return { onEvent() { for (;;) {} }, intents() { return []; } };
+}
+`;
+  const host = new SettlerHost(src, { tariffCentsPerKwh: 60 });
+  const t0 = now();
+  const r = host.onEvent({ seq: 1, at: 0, type: "tick" }, 0);
+  const ms = now() - t0;
+  const stopped = !!host.dead && /longer than/.test(host.dead);
+  const pass = stopped && ms >= CALL_TIMEOUT_MS * 0.9 && ms < CALL_TIMEOUT_MS * 3;
+  return {
+    group: "b",
+    id: "infinite-loop",
+    label: `settle.js runs for (;;) {} in onEvent (budget ${CALL_TIMEOUT_MS} ms per call)`,
+    pass,
+    layer: "vm",
+    detail: stopped ? `stopped after ${Math.round(ms)} ms: ${host.dead}` : `not stopped: ${r.error || "returned"}`,
+    ms
+  };
+}
+function tcpCheck(host, port, timeoutMs) {
+  return new Promise((resolve) => {
+    const t0 = now();
+    let done = false;
+    let address = null;
+    const finish = (reached, detail) => {
+      if (done) return;
+      done = true;
+      sock.destroy();
+      resolve({ reached, detail, address, ms: now() - t0 });
+    };
+    const sock = import_node_net2.default.connect({ host, port });
+    sock.once("lookup", (err, addr) => {
+      if (!err) address = addr;
+    });
+    sock.once("connect", () => finish(true, `connected to ${sock.remoteAddress}:${sock.remotePort} (then closed; nothing was sent)`));
+    sock.once("error", (e) => finish(false, `${e.code || e.name}: ${e.message}`));
+    sock.setTimeout(timeoutMs, () => finish(false, `no connection within ${timeoutMs} ms`));
+  });
+}
+function dnsCheck(name, timeoutMs) {
+  return new Promise((resolve) => {
+    const t0 = now();
+    let done = false;
+    const timer = setTimeout(() => {
+      done = true;
+      resolve({ reached: false, detail: `no answer within ${timeoutMs} ms`, ms: now() - t0 });
+    }, timeoutMs);
+    import_node_dns.default.lookup(name, { all: true }, (err, addrs) => {
+      if (done) return;
+      clearTimeout(timer);
+      if (err) resolve({ reached: false, detail: `${err.code || err.name}: ${err.message}`, ms: now() - t0 });
+      else resolve({ reached: true, detail: `resolved to ${addrs.map((a) => a.address).join(", ")}`, ms: now() - t0 });
+    });
+  });
+}
+var SECRET_NAME = /STRIPE|SECRET|API_?KEY|TOKEN|PASSWORD|PRIVATE|OPENROUTER|ANTHROPIC|CREATEOS|VERCEL|CREDENTIAL/i;
+var SECRET_VALUE = /\b(sk|rk|pk)_(test|live)_[A-Za-z0-9]{8,}|\bsk-or-[A-Za-z0-9-]{8,}|\bsk-ant-[A-Za-z0-9-]{8,}|\bwhsec_[A-Za-z0-9]{8,}/;
+function envCheck(env = process.env) {
+  const names = Object.keys(env).sort();
+  const byName = names.filter((n) => SECRET_NAME.test(n));
+  const byValue = names.filter((n) => SECRET_VALUE.test(String(env[n] ?? "")));
+  const flagged = [.../* @__PURE__ */ new Set([...byName, ...byValue])];
+  return {
+    group: "d",
+    id: "env-keys",
+    label: "no Stripe, model or CreateOS key in the world process environment (names only, never values)",
+    pass: flagged.length === 0,
+    detail: flagged.length ? `credential-like variables present: ${flagged.join(", ")}` : `${names.length} variables, none named or valued like a key`,
+    names,
+    flagged,
+    ms: 0
+  };
+}
+async function runProbe({ timeoutMs = 3e3 } = {}) {
+  const t0 = now();
+  const checks = [];
+  for (const c of VM_CHECKS) checks.push(runVmCheck(c));
+  checks.push(runLoopCheck());
+  const [tcp, lookup] = await Promise.all([tcpCheck("api.stripe.com", 443, timeoutMs), dnsCheck("example.com", timeoutMs)]);
+  checks.push({
+    group: "c",
+    id: "tcp-stripe",
+    label: "the world process opens TCP to api.stripe.com:443",
+    pass: !tcp.reached,
+    layer: "network",
+    detail: tcp.detail + (tcp.address ? ` (DNS gave ${tcp.address})` : ""),
+    ms: tcp.ms
+  });
+  checks.push({ group: "c", id: "dns-example", label: "the world process resolves example.com", pass: !lookup.reached, layer: "network", detail: lookup.detail, ms: lookup.ms });
+  const env = envCheck();
+  checks.push({ group: "d", id: env.id, label: env.label, pass: env.pass, layer: "environment", detail: env.detail, ms: env.ms });
+  return {
+    ok: checks.every((c) => c.pass),
+    ran_at: Date.now(),
+    node: process.version,
+    platform: `${process.platform} ${process.arch}`,
+    pid: process.pid,
+    checks: checks.map((c) => ({ ...c, ms: Math.round(c.ms * 10) / 10 })),
+    env: { names: env.names, flagged: env.flagged },
+    ms: Math.round(now() - t0)
+  };
+}
+
 // src/live.js
 var { RPCServer, createRPCError } = import_ocpp_rpc2.default;
 var WORLD_VERSION = "0.1.0";
@@ -52445,13 +52707,22 @@ async function startWorld({
   settleSource = V1_NAIVE_SOURCE,
   settleName = V1_NAIVE_NAME,
   timing = LIVE_TIMING,
+  stateDir = null,
+  // when set, the last agent run is also kept in <stateDir>/agent-last.json (survives a world restart)
   log = () => {
   }
 } = {}) {
   const ids = chargerIds(chargers);
   const proxies = /* @__PURE__ */ new Map();
   const startedAt = Date.now();
-  const ctx = { core: null, clock: null, lastSuite: null, suiteChain: Promise.resolve() };
+  const ctx = { core: null, clock: null, lastSuite: null, agentLast: null, probing: null, suiteChain: Promise.resolve() };
+  const agentFile = stateDir ? import_node_path.default.join(stateDir, "agent-last.json") : null;
+  if (agentFile) {
+    try {
+      ctx.agentLast = JSON.parse(import_node_fs.default.readFileSync(agentFile, "utf8"));
+    } catch (e) {
+    }
+  }
   const links = {
     cut: (id) => proxies.get(id).setCut(true),
     restore: (id) => proxies.get(id).setCut(false),
@@ -52530,11 +52801,11 @@ async function startWorld({
       return;
     }
     const url = new URL(req.url, "http://world.local");
-    const path = url.pathname.replace(/\/+$/, "") || "/";
+    const path2 = url.pathname.replace(/\/+$/, "") || "/";
     const core = ctx.core;
     const m = req.method;
-    if (m === "GET" && path === "/") return send(res, 200, index());
-    if (m === "GET" && path === "/health") {
+    if (m === "GET" && path2 === "/") return send(res, 200, index());
+    if (m === "GET" && path2 === "/health") {
       return send(res, 200, {
         ok: true,
         name: "once-world",
@@ -52548,38 +52819,38 @@ async function startWorld({
         egress: "none: the world connects only to 127.0.0.1"
       });
     }
-    if (m === "GET" && path === "/state") {
+    if (m === "GET" && path2 === "/state") {
       const n = Math.max(0, Math.min(1e3, Number(url.searchParams.get("events") ?? 100) || 0));
       return send(res, 200, { ok: true, sim_speed: speed, ...core.state({ events: n }) });
     }
-    if (m === "GET" && path === "/events") {
+    if (m === "GET" && path2 === "/events") {
       const since = Number(url.searchParams.get("since") || 0) || 0;
       const limit = Math.max(1, Math.min(2e3, Number(url.searchParams.get("limit") || 500) || 500));
       if (url.searchParams.get("stream") === "1" || /text\/event-stream/.test(req.headers.accept || "")) return stream(req, res, since);
       return send(res, 200, { ok: true, ...core.eventsSince(since, limit) });
     }
-    if (m === "POST" && path === "/cmd") return send(res, 200, command(await readJson(req)));
-    if (m === "POST" && path === "/hold") {
+    if (m === "POST" && path2 === "/cmd") return send(res, 200, command(await readJson(req)));
+    if (m === "POST" && path2 === "/hold") {
       const b = await readJson(req);
-      const r = core.placeHold({ charger: b.charger, payment_intent: b.payment_intent, amount_cents: b.amount_cents, currency: b.currency || "eur" });
+      const r = core.placeHold({ charger: b.charger, payment_intent: b.payment_intent, amount_cents: b.amount_cents, currency: b.currency || "eur", driver: b.driver ?? null });
       return send(res, r.existing ? 200 : 201, { ok: true, ...r });
     }
-    if (m === "GET" && path === "/intents") {
+    if (m === "GET" && path2 === "/intents") {
       const pending = url.searchParams.get("pending");
       const list = pending === "1" || pending === "true" ? core.pendingIntents() : core.state({ events: 0 }).intents;
       return send(res, 200, { ok: true, intents: list });
     }
-    if (m === "POST" && path === "/intents/claim") {
+    if (m === "POST" && path2 === "/intents/claim") {
       const b = await readJson(req, true);
       return send(res, 200, { ok: true, intents: core.claimIntents({ limit: b.limit || 50, leaseMs: b.lease_ms || 15e3 }) });
     }
-    const mr = path.match(/^\/intents\/([^/]+)\/result$/);
+    const mr = path2.match(/^\/intents\/([^/]+)\/result$/);
     if (m === "POST" && mr) {
       const b = await readJson(req);
       const r = core.recordResult(decodeURIComponent(mr[1]), b);
       return send(res, 200, { ok: true, ...r });
     }
-    if (m === "GET" && path === "/settle") {
+    if (m === "GET" && path2 === "/settle") {
       const s = core.settle;
       if (url.searchParams.get("raw") === "1") {
         res.writeHead(200, { "content-type": "text/javascript; charset=utf-8", "x-settle-version": String(s.version) });
@@ -52588,19 +52859,19 @@ async function startWorld({
       }
       return send(res, 200, { ok: true, version: s.version, name: s.name, sha256: s.sha256, loaded_at: s.loaded_at, source: s.source, errors: core.settlerErrors, dead: core.settler.dead });
     }
-    if ((m === "PUT" || m === "POST") && path === "/settle") {
+    if ((m === "PUT" || m === "POST") && path2 === "/settle") {
       const { source, name } = await readSource(req);
       const v = validateSettleSource(source, { tariffCentsPerKwh, now: core.clock.now() });
       if (!v.ok) return send(res, 400, { ok: false, error: v.error, sha256: v.sha });
       const s = core.loadSettler(source, { name: name || `settle-v${core.settleVersion + 1}.js`, replay: true });
       return send(res, 200, { ok: true, version: s.version, name: s.name, sha256: s.sha256 });
     }
-    if (m === "POST" && path === "/settle/validate") {
+    if (m === "POST" && path2 === "/settle/validate") {
       const { source } = await readSource(req);
       const v = validateSettleSource(source, { tariffCentsPerKwh, now: core.clock.now() });
       return send(res, v.ok ? 200 : 400, { ok: v.ok, error: v.error, sha256: v.sha });
     }
-    if (m === "POST" && path === "/suite") {
+    if (m === "POST" && path2 === "/suite") {
       const b = await readJson(req, true);
       const source = typeof b.source === "string" ? b.source : core.settle.source;
       const version = typeof b.source === "string" ? null : core.settle.version;
@@ -52610,15 +52881,36 @@ async function startWorld({
       core.emit({ type: "suite", settle_version: version, summary: report.summary, ok: report.ok, totals: report.totals });
       return send(res, 200, out);
     }
-    if (m === "GET" && path === "/suite/last") return send(res, 200, ctx.lastSuite ? { ok: true, report: ctx.lastSuite } : { ok: true, report: null });
-    if (m === "POST" && path === "/suite/trace") {
+    if (m === "GET" && path2 === "/suite/last") return send(res, 200, ctx.lastSuite ? { ok: true, report: ctx.lastSuite } : { ok: true, report: null });
+    if (m === "POST" && path2 === "/suite/trace") {
       const b = await readJson(req);
       if (!Number.isFinite(b.seed)) throw httpError(400, "seed (number) is required");
       const source = typeof b.source === "string" ? b.source : core.settle.source;
       const rep = await serial(() => runScenario(b.seed >>> 0, source, { tariffCentsPerKwh, trace: true }));
       return send(res, 200, { ok: true, report: rep });
     }
-    if (m === "POST" && path === "/reset") {
+    if (m === "GET" && path2 === "/agent/last") return send(res, 200, { ok: true, run: ctx.agentLast });
+    if (m === "POST" && path2 === "/agent/last") {
+      const b = await readJson(req);
+      const run = { ...b, received_at: Date.now(), received_settle_version: core.settle ? core.settle.version : null };
+      ctx.agentLast = run;
+      if (agentFile) {
+        try {
+          import_node_fs.default.writeFileSync(agentFile, JSON.stringify(run));
+        } catch (e) {
+          log(`could not write ${agentFile}: ${e.message}`);
+        }
+      }
+      return send(res, 200, { ok: true, received_at: run.received_at });
+    }
+    if (m === "POST" && path2 === "/probe") {
+      if (!ctx.probing) ctx.probing = runProbe().finally(() => {
+        ctx.probing = null;
+      });
+      const report = await ctx.probing;
+      return send(res, 200, { ...report, world_uptime_s: Math.round((Date.now() - startedAt) / 1e3) });
+    }
+    if (m === "POST" && path2 === "/reset") {
       const b = await readJson(req, true);
       const keep = b.settle !== "v1";
       const old = ctx.core;
@@ -52630,7 +52922,7 @@ async function startWorld({
       ctx.core.start();
       return send(res, 200, { ok: true, settle_version: ctx.core.settle.version });
     }
-    throw httpError(404, `no route ${m} ${path}`);
+    throw httpError(404, `no route ${m} ${path2}`);
   }
   function serial(fn) {
     const p = ctx.suiteChain.then(fn, fn);
@@ -52709,7 +53001,7 @@ data: ${JSON.stringify(e)}
         "GET /state?events=100",
         "GET /events?since=0&limit=500 (or Accept: text/event-stream)",
         "POST /cmd {op: plug|unplug|cut|restore|reboot|quirk|skew, charger, quirk?, on?, power_kw?, seconds?}",
-        "POST /hold {charger, payment_intent, amount_cents}",
+        "POST /hold {charger, payment_intent, amount_cents, driver?}",
         "GET /intents?pending=1",
         "POST /intents/claim {limit?, lease_ms?}",
         "POST /intents/:id/result {ok, status, error, stripe_object}",
@@ -52719,7 +53011,10 @@ data: ${JSON.stringify(e)}
         "POST /suite {count?, seed?, seeds?, source?}",
         "GET /suite/last",
         "POST /suite/trace {seed, source?}",
-        'POST /reset {settle?: "v1"}'
+        'POST /reset {settle?: "v1"}',
+        "GET /agent/last",
+        "POST /agent/last {model, attempts, ...}",
+        "POST /probe"
       ]
     };
   }
@@ -52819,6 +53114,7 @@ startWorld({
   host: process.env.HOST || "0.0.0.0",
   speed: num(process.env.SIM_SPEED, 300),
   tariffCentsPerKwh: num(process.env.TARIFF_CENTS_PER_KWH, 60),
+  stateDir: process.env.STATE_DIR || null,
   log: (line) => console.log(line)
 }).then((world) => {
   let closing = false;

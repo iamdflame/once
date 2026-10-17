@@ -8,11 +8,11 @@ It runs locally and, bundled into a single file, inside a CreateOS sandbox with 
 node world/src/index.js          # dev, needs world/node_modules (npm install in world/)
 npm --prefix world run bundle    # -> world/dist/world.cjs (single file, all deps inlined, ~2 MB)
 node world/dist/world.cjs        # anywhere with Node 18+, no npm install, no network
-npm --prefix world test          # node --test: 25 tests
+npm --prefix world test          # node --test: 29 tests
 node world/scripts/suite.mjs world/settlers/v1-naive.js --notes   # the 30-seed suite offline
 ```
 
-Environment: `PORT` (8080), `HOST` (0.0.0.0), `SIM_SPEED` (300: world time runs 300x faster than the wall clock, so an hour of charging plays in 12 s), `TARIFF_CENTS_PER_KWH` (60).
+Environment: `PORT` (8080), `HOST` (0.0.0.0), `SIM_SPEED` (300: world time runs 300x faster than the wall clock, so an hour of charging plays in 12 s), `TARIFF_CENTS_PER_KWH` (60), `STATE_DIR` (unset; when set, the last agent run is also written to `<STATE_DIR>/agent-last.json` and read back at start).
 
 Contents: [Architecture](#architecture) · [Chargers and quirks](#chargers-and-firmware-quirks) · [Episodes and holds](#episodes-and-holds) · [HTTP API](#http-api) · [**settle.js interface**](#the-settlejs-interface) · [Payment authority model](#payment-authority-model) · [Scenario runner](#scenario-runner) · [For the host](#notes-for-the-host) · [Limits](#limits)
 
@@ -46,6 +46,7 @@ Contents: [Architecture](#architecture) · [Chargers and quirks](#chargers-and-f
 | `src/authority.js` | Payment authority model (Stripe manual-capture semantics) |
 | `src/scenarios.js`, `src/runner.js` | Seeded scenarios and the judge |
 | `src/live.js`, `src/index.js` | HTTP API, CSMS endpoint, proxies, startup |
+| `src/probe.js` | The boundary probe (`POST /probe`): vm escapes, the 1 s budget, egress and the environment |
 | `settlers/v1-naive.js` | The program the world starts with: captures on every StopTransaction (wrong on purpose) |
 | `settlers/reference-episode-ledger.js` | Tests only. Not bundled, not served, never shown to the agent |
 
@@ -79,7 +80,11 @@ A **plug-in episode** lasts from plug to unplug on one charger and may span seve
 expected_cents = min(hold.amount_cents, round(energy_wh * tariffCentsPerKwh / 1000))
 ```
 
-`POST /hold {charger, payment_intent, amount_cents}` binds the **next** plug-in on that charger to a PaymentIntent the host created (a €50 manual-capture hold in the demo). Holds queue FIFO per charger: the first plug-in after a hold takes the oldest unbound hold. The settlement program is told about the hold (a `hold` event) but not about episodes: it has to infer them from OCPP, like a real CSMS.
+`POST /hold {charger, payment_intent, amount_cents, driver?}` binds the **next** plug-in on that charger to a PaymentIntent the host created (a €50 manual-capture hold in the demo). Holds queue FIFO per charger: the first plug-in after a hold takes the oldest unbound hold. The settlement program is told about the hold (a `hold` event) but not about episodes: it has to infer them from OCPP, like a real CSMS.
+
+**Drivers.** Each hold has a `seq` (1, 2, ... per charger since the last reset) and a `driver` label: the one the host passes, else `A`, `B`, ... by `seq`. An episode's `driver` is its hold's. The settlement program never sees the label (the `hold` feed event is unchanged).
+
+**Attribution: whose energy a capture is for.** The world knows which OCPP transaction belongs to which plug-in episode (it meters the truth), and it knows which event settle.js was handling when it emitted an intent. So every intent carries `energy_episode_id` / `energy_driver`: the episode of the transaction in the StopTransaction, MeterValues or StartTransaction that triggered it (same charger only), or, for an intent emitted on a tick or a status message, the hold's own episode (`attribution` says which). `wrong_driver` is true when that episode is not the one the charged hold paid for. This is how the demo shows the wrong-driver capture: under v1 a StopTransaction that arrives after the next driver paid is billed to the next driver's hold (`driver: "B", energy_driver: "A", wrong_driver: true`), Stripe says `succeeded`, and A's hold is left `stranded`.
 
 ## HTTP API
 
@@ -102,14 +107,17 @@ The board in one call.
     "meter_wh": 4129308, "queue_len": 0, "queue": [], "quirks": { "queue_offline": true, "dup_stop": true, "...": false },
     "clock_skew_s": 0, "stats": { "calls": 40, "queued": 9, "dropped": 0, "duplicates": 1, "reboots": 0, "transactions": 1 },
     "episode": { "id": "CP07-E1", "payment_intent": "pi_...", "energy_wh": 5321, "cost_cents": 319, "plugged_at": 0 },
-    "next_hold": null
+    "next_hold": null /* or {payment_intent, amount_cents, driver} */
   }],
-  "episodes": [{ "id": "CP07-E1", "charger": "CP07", "payment_intent": "pi_...", "amount_cents": 5000, "plugged_at": 0, "unplugged_at": null,
+  "episodes": [{ "id": "CP07-E1", "charger": "CP07", "payment_intent": "pi_...", "amount_cents": 5000, "driver": "A", "plugged_at": 0, "unplugged_at": null,
                  "power_kw": 11, "energy_wh": 5321, "expected_cents": 319,
                  "transactions": [{ "transaction_id": 1001, "local_id": 7060001, "start_lost": false, "meter_start": 4123987, "meter_stop": null, "energy_wh": 5321, "reason": null }] }],
-  "holds": [{ "payment_intent": "pi_...", "charger": "CP07", "amount_cents": 5000, "currency": "eur", "placed_at": 0, "episode_id": "CP07-E1",
+  "holds": [{ "payment_intent": "pi_...", "charger": "CP07", "seq": 1, "driver": "A", "amount_cents": 5000, "currency": "eur", "placed_at": 0, "episode_id": "CP07-E1",
               "status": "requires_capture" /* | succeeded | canceled */, "amount_captured": 0, "amount_released": 0,
-              "results": [{ "intent": "in_00001", "kind": "capture", "amount_cents": 1140, "ok": true, "status": "succeeded", "error": null }] }],
+              "episode_ended": false, "stranded": false,   // stranded: its episode is over, still requires_capture, nothing pending for it
+              "captured_for": null,                        // after a capture: {episode_id, driver, wrong_driver}, whose energy it paid for
+              "results": [{ "intent": "in_00001", "kind": "capture", "amount_cents": 1140, "ok": true, "status": "succeeded", "error": null,
+                            "driver": "A", "energy_episode_id": "CP07-E1", "energy_driver": "A", "wrong_driver": false }] }],
   "intents": [ /* see GET /intents */ ],
   "last_seq": 412,
   "events": [ /* the last N events, see GET /events */ ]
@@ -132,7 +140,7 @@ The board in one call.
 Response: `{ok, op, results: [{charger, ok, error?}], chargers: [<snapshots of the targeted chargers>]}`. With a single charger a failure is an HTTP error (404 unknown charger, 409 already plugged / not plugged, 400 bad op or quirk).
 
 ### `POST /hold`
-`{charger, payment_intent, amount_cents, currency?: "eur"}` → `201 {ok, hold, existing: false}`. Idempotent: the same `payment_intent` for the same charger returns `200 {..., existing: true}`; for another charger `409`.
+`{charger, payment_intent, amount_cents, currency?: "eur", driver?: "B"}` → `201 {ok, hold, existing: false}` (`hold.seq`, `hold.driver`; `driver` defaults to A, B, ... by seq). Idempotent: the same `payment_intent` for the same charger returns `200 {..., existing: true}`; for another charger `409`.
 
 ### Intents
 An intent is a settlement decision the program made. World intent ids are URL-safe (`in_00001`).
@@ -143,6 +151,10 @@ An intent is a settlement decision the program made. World intent ids are URL-sa
   "episode_id": "tx-1001",        // the settle.js's episode key (idempotency anchor)
   "charger": "CP07", "payment_intent": "pi_...", "amount_cents": 1140,
   "kind": "capture",              // "release" when amount_cents is 0: cancel the PaymentIntent
+  "driver": "B", "hold_seq": 2,   // whose hold is charged
+  "energy_episode_id": "CP07-E1", "energy_driver": "A", "energy_wh": 7280, "energy_expected_cents": 437,  // whose energy it bills
+  "attribution": "StopTransaction transactionId 1001",  // or "hold episode" (tick / status trigger)
+  "wrong_driver": true,           // the energy is not from the episode this hold paid for
   "status": "pending",            // pending | in_flight (claimed) | succeeded | failed | rejected (world refused it) | suppressed (replay)
   "error": null, "settle_version": 1, "created_at": 0, "created_seq": 98,
   "result": null,                 // the host's report, once posted
@@ -190,7 +202,7 @@ Every event has `{seq, at, type, ...}`:
 | `ocpp` | `charger, action, payload, response` (a call the CSMS accepted) | yes |
 | `link` | `charger, state: "connected"\|"disconnected"` (as the CSMS sees the socket) | yes |
 | `hold` | `charger, connectorId, payment_intent, amount_cents, currency` | yes |
-| `intent_result` | `intent_id` (settle.js's), `world_intent_id, episode_id, charger, payment_intent, kind, amount_cents, ok, status, error` | yes |
+| `intent_result` | `intent_id` (settle.js's), `world_intent_id, episode_id, charger, payment_intent, kind, amount_cents, ok, status, error` (the log also carries `driver, energy_episode_id, energy_driver, wrong_driver`; settle.js does not see those) | yes |
 | `cmd` | `op, charger, ...` (plug carries `episode_id, payment_intent, power_kw, id_tag`; unplug `energy_wh, offline`) | no |
 | `charger` | `charger, kind` (`online, offline, queued, dropped, duplicate, rejected, plug, unplug, reboot, boot, meter-reset, start-lost, quirk, skew`), `ocpp_action?, queue?, why?` (firmware-side view) | no |
 | `intent` | `intent` (as in /intents) | no |
@@ -198,6 +210,22 @@ Every event has `{seq, at, type, ...}`:
 | `settler_error`, `settler_log` | `version, error` / `lines` (console output of settle.js) | no |
 | `suite` | `settle_version, summary, ok, totals` | no |
 | `violation` | an OCPP schema violation (should never happen) | no |
+
+### The last agent run
+- `POST /agent/last {...}`: the host posts the record of a finished `/api/agent/fix` run (model, attempts with suite summaries, final diff, deployed version, timings, ok). The world adds `received_at` and keeps it in memory (survives `/reset` and host cold starts; with `STATE_DIR` also a world restart).
+- `GET /agent/last` → `{ok, run}` (`run: null` until the first run).
+
+### The boundary probe
+`POST /probe` → `{ok, ran_at, node, platform, pid, checks: [{group, id, label, pass, layer, detail, ms}], env: {names, flagged}, ms, world_uptime_s}`. One run at a time; about 1-4 s. It never touches the deployed program or the board.
+
+| group | check | pass when |
+|---|---|---|
+| a | settle.js calls `fetch`, `require('fs')` (literal: refused by the loader; hidden as `globalThis['req'+'uire']`: undefined in the vm), `process.env`, `import/**/('node:fs')` (hidden from the loader pattern), `eval`, and the escape `({}).constructor.constructor('return process')()` | each throws inside the vm (or the loader refuses the file) |
+| b | settle.js runs `for (;;) {}` in `onEvent` | the call is stopped at the 1 s budget (0.9-3 s measured) |
+| c | the world process (outside the vm) opens TCP to `api.stripe.com:443` and resolves `example.com` (3 s timeout each) | both fail. They succeed on a laptop; the host marks them "local: not applicable" |
+| d | the world's environment: variable names only, never values | no name and no value looks like a Stripe, model or CreateOS credential |
+
+The infinite-loop check blocks the world's event loop for about a second (chargers keep their queues; the CSMS answers late once).
 
 ### Other
 - `POST /reset {settle?: "v1"}` → a clean board (new fleet, no holds, no history); keeps the current settle.js unless `settle: "v1"`. Version numbers keep increasing.
