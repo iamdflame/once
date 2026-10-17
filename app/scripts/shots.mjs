@@ -22,8 +22,9 @@ fs.mkdirSync(out, { recursive: true });
 // The company pages are plain navigations.
 const screens = [
   { name: "board", path: "/", prep: "demo" },
-  { name: "bench", link: /^Fix it$/, wait: 17000 },
-  { name: "proof", link: /^Proof$/, wait: 1200 },
+  { name: "bench", link: /^Fix it on the bench$/, wait: 17000 },
+  { name: "proof", link: /^Proof$/, wait: 1200, prep: "probe" },
+  { name: "bench-last", link: /^Bench$/, wait: 1500 },
   { name: "status", path: "/status", wait: 16000 },
   { name: "pricing", path: "/pricing", wait: 600 },
   { name: "docs", path: "/docs", wait: 600 },
@@ -67,6 +68,11 @@ try {
         await page.evaluate(() => window.scrollTo(0, 0));
       }
       if (sc.prep === "demo" && mode === "mock") await playDemo(page);
+      if (sc.prep === "probe") {
+        await page.getByRole("button", { name: /^Probe the boundary$/ }).click();
+        await page.waitForTimeout(mode === "mock" ? 2500 : 20000);
+        await page.evaluate(() => window.scrollTo(0, 0));
+      }
       if (sc.wait) await page.waitForTimeout(sc.wait);
       const wide = await page.evaluate(() => {
         const w = document.documentElement.scrollWidth - document.documentElement.clientWidth;
@@ -106,9 +112,9 @@ if (errors.length) {
   console.log("No console errors.");
 }
 
-/** The demo, driven from the try-it strip: pay, cut, unplug, restore; wait for the capture. */
+/** The wrong-driver story, driven from the try-it strip: A pays, cut, A unplugs, B pays, restore; wait for the capture. */
 async function playDemo(page) {
-  const guide = page.getByLabel("Try it in four steps");
+  const guide = page.getByLabel("Try it in five steps");
   await guide.getByRole("button", { name: /Plug in and pay/ }).click();
   await page.getByRole("button", { name: /^Pay €50\.00$/ }).click();
   await page.waitForTimeout(7800); // 22 kW at 300x and €0.60/kWh: about €11.40 by the unplug
@@ -116,7 +122,9 @@ async function playDemo(page) {
   await page.waitForTimeout(3400);
   await guide.getByRole("button", { name: /^Unplug/ }).click();
   await page.waitForTimeout(1500);
+  await guide.getByRole("button", { name: /Next driver pays/ }).click();
+  await page.waitForTimeout(1500);
   await guide.getByRole("button", { name: /Restore/ }).click();
-  await page.waitForTimeout(5000);
+  await page.waitForTimeout(6000);
   await page.evaluate(() => window.scrollTo(0, 0));
 }
