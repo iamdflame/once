@@ -8,9 +8,25 @@ import { describe } from "./errors";
 const g = globalThis as unknown as { __onceBound?: Map<string, unknown> };
 const bound = () => (g.__onceBound ??= new Map());
 
+/**
+ * Read a Checkout Session. The claimable test-sandbox key answers "No such checkout.session" when a
+ * completed session is retrieved by id (verified 2026-10-17), but lists it, so fall back to the list.
+ */
+async function readSession(sessionId: string) {
+  try {
+    return await stripe().checkout.sessions.retrieve(sessionId);
+  } catch (e) {
+    for await (const s of stripe().checkout.sessions.list({ limit: 100 })) {
+      if (s.id === sessionId) return s;
+    }
+    throw e;
+  }
+}
+
 export async function confirmCheckout(sessionId: string) {
-  const session = await stripe().checkout.sessions.retrieve(sessionId, { expand: ["payment_intent"] });
-  const pi = session.payment_intent && typeof session.payment_intent === "object" ? session.payment_intent : null;
+  const session = await readSession(sessionId);
+  const piRef = session.payment_intent;
+  const pi = !piRef ? null : typeof piRef === "object" ? piRef : await stripe().paymentIntents.retrieve(piRef);
   const charger = session.metadata?.charger ?? pi?.metadata?.charger ?? null;
   const out = {
     session: { id: session.id, status: session.status, payment_status: session.payment_status, amount_total: session.amount_total, currency: session.currency },
