@@ -291,3 +291,79 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* ---------- holds from the world, and the run receipt */
+.holds {
+  grid-column: 1 / -1;
+}
+
+.holdList {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.hold {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) 60px minmax(0, 1fr) auto;
+  gap: 12px 18px;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid oklch(0.3 0.02 60 / 0.08);
+  font-size: 15px;
+}
+
+.hold:last-child {
+  border-bottom: 0;
+}
+
+.hold a.mono {
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  overflow-wrap: anywhere;
+}
+
+.holdCharger {
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.holdAmt {
+  color: var(--ink-soft);
+}
+
+.holdNote {
+  margin-top: 12px;
+  font-size: 13.5px;
+  color: var(--ink-mute);
+}
+
+.receiptBox {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid oklch(0.3 0.02 60 / 0.1);
+}
+
+.receiptNote {
+  font-size: 13.5px;
+  color: var(--ink-mute);
+  max-width: 72ch;
+}
+
+@media (max-width: 760px) {
+  .hold {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .hold a.mono {
+    grid-column: 1 / -1;
+  }
+
+  .receiptBox {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

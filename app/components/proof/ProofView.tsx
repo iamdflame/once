@@ -3,10 +3,29 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useWorld } from "@/components/data/provider";
-import type { Proof } from "@/components/data/types";
-import { euro } from "@/components/data/types";
+import type { Proof, ReceiptLine } from "@/components/data/types";
+import { deployTag, euro, settleLabel } from "@/components/data/types";
 import { Tiles } from "@/components/bench/Tiles";
+import { RunReceipt } from "./RunReceipt";
 import s from "./proof.module.css";
+
+/** Every hold the world knows, with its latest outcome, from the board's receipt lines. */
+function holdsFrom(lines: ReceiptLine[]) {
+  const by = new Map<string, { payment_intent: string; charger: string; amount_cents: number; url?: string; state: string; captured?: number }>();
+  for (const l of lines) {
+    if (!l.payment_intent) continue;
+    const h = by.get(l.payment_intent) ?? { payment_intent: l.payment_intent, charger: l.charger ?? "", amount_cents: 5000, url: l.stripe_url, state: "uncaptured" };
+    if (l.kind === "hold") h.amount_cents = l.amount_cents ?? h.amount_cents;
+    if (l.kind === "capture") {
+      h.state = "captured";
+      h.captured = l.amount_cents;
+    }
+    if (l.kind === "released" && h.state === "uncaptured") h.state = "released";
+    if (l.kind === "refused" && h.state !== "captured") h.state = "refused";
+    by.set(l.payment_intent, h);
+  }
+  return [...by.values()].reverse();
+}
 
 export function ProofView() {
   const { world, snap, mode } = useWorld();
@@ -31,6 +50,7 @@ export function ProofView() {
   const suite = proof?.suite ?? snap.suite;
   const settle = proof?.settle ?? snap.settle;
   const sandbox = proof?.sandbox ?? snap.sandbox;
+  const holds = holdsFrom(snap.receipt);
 
   return (
     <>
@@ -42,12 +62,37 @@ export function ProofView() {
       </section>
 
       <section className={`wrap ${s.grid}`}>
+        <div className={`${s.card} ${s.holds}`}>
+          <h2 className={s.cardTitle}>Holds in the world</h2>
+          {holds.length === 0 ? (
+            <p className={s.empty}>
+              No holds yet. <Link href="/">Plug in and pay</Link> on the board; the hold appears here at once, the capture when the session ends.
+            </p>
+          ) : (
+            <ul className={s.holdList}>
+              {holds.map((h) => (
+                <li key={h.payment_intent} className={s.hold} data-state={h.state}>
+                  <a href={h.url} target="_blank" rel="noreferrer" className={s.mono}>
+                    {h.payment_intent}
+                  </a>
+                  <span className={s.holdCharger}>{h.charger}</span>
+                  <span className={`${s.holdAmt} num`}>{euro(h.amount_cents)} held</span>
+                  <span className={s.status} data-status={h.state === "captured" ? "succeeded" : h.state === "uncaptured" ? "requires_capture" : h.state === "refused" ? "refused" : "canceled"}>
+                    {h.state === "captured" ? `captured once · ${euro(h.captured ?? 0)}` : h.state}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className={s.holdNote}>Read from the world&apos;s state as the board sees it; the table below is what Stripe answered to each capture attempt.</p>
+        </div>
+
         <div className={`${s.card} ${s.captures}`}>
           <h2 className={s.cardTitle}>Captures</h2>
           {err ? <p className={s.err}>Could not load the ledger: {err}</p> : null}
           {proof && proof.captures.length === 0 ? (
             <p className={s.empty}>
-              No holds yet. <Link href="/">Plug in and pay</Link> on the board; the capture appears here with its Stripe id.
+              {holds.length ? "No capture attempt has reached Stripe yet: unplug, then restore the link." : "Nothing has been captured. The first capture appears here with its Stripe id."}
             </p>
           ) : null}
           {proof && proof.captures.length > 0 ? (
@@ -95,6 +140,7 @@ export function ProofView() {
             </div>
           ) : null}
           {!proof && !err ? <p className={s.empty}>Loading the ledger…</p> : null}
+          <RunReceipt mode={mode} proof={proof} settle={settle} />
         </div>
 
         <div className={`${s.card} ${s.suite}`}>
@@ -102,7 +148,7 @@ export function ProofView() {
           {suite ? (
             <>
               <p className={s.suiteMeta}>
-                settle.js <b>{suite.version}</b> · {suite.scenarios.length} seeded scenarios · {suite.ran_at ? new Date(suite.ran_at).toLocaleString() : ""}
+                settle.js <b>{deployTag(suite.version)}</b> · {suite.scenarios.length} seeded scenarios · {suite.ran_at ? new Date(suite.ran_at).toLocaleString() : ""}
               </p>
               <Tiles tiles={suite.scenarios} count={suite.scenarios.length} running={false} />
             </>
@@ -143,7 +189,8 @@ export function ProofView() {
             </dd>
             <dt>Settlement program</dt>
             <dd>
-              settle.js <b>{settle?.version ?? "—"}</b> · {settle?.author === "agent" ? "written by the agent" : "shipped with the world"} · loaded fresh in <span className={s.mono}>node:vm</span> with no fs, net or process
+              settle.js <b>{settle ? settleLabel(settle) : "—"}</b>
+              {settle?.name ? <> ({settle.name})</> : null} · loaded fresh in <span className={s.mono}>node:vm</span> with no fs, net or process
             </dd>
           </dl>
         </div>
