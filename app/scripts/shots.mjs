@@ -1,6 +1,6 @@
-// Screenshots of every screen at desktop and phone width, plus a console
-// error check. Uses the Playwright install at a path given by PLAYWRIGHT_DIR
-// (or the app's own node_modules when present).
+// Screenshots of every screen at desktop and phone width, plus a console error
+// check and a horizontal-overflow check at phone width. Uses the Playwright
+// install at a path given by PLAYWRIGHT_DIR (or the app's own node_modules).
 //
 //   node scripts/shots.mjs http://localhost:3100 [outDir] [mock|live]
 
@@ -17,13 +17,20 @@ const { chromium } = require("playwright");
 
 fs.mkdirSync(out, { recursive: true });
 
-// After the board, every screen is reached by a client-side link so the mock
-// world (in memory) carries the demo state along, as it does for a person.
+// After the board, the bench and the proof are reached by client-side links so the
+// mock world (in memory) carries the demo state along, as it does for a person.
+// The company pages are plain navigations.
 const screens = [
   { name: "board", path: "/", prep: "demo" },
   { name: "bench", link: /^Fix it$/, wait: 17000 },
   { name: "proof", link: /^Proof$/, wait: 1200 },
-  { name: "about", link: /^About$/, wait: 600 },
+  { name: "status", path: "/status", wait: 16000 },
+  { name: "pricing", path: "/pricing", wait: 600 },
+  { name: "docs", path: "/docs", wait: 600 },
+  { name: "security", path: "/security", wait: 600 },
+  { name: "terms", path: "/terms", wait: 400 },
+  { name: "privacy", path: "/privacy", wait: 400 },
+  { name: "about", path: "/about", wait: 600 },
 ];
 
 const sizes = [
@@ -32,6 +39,7 @@ const sizes = [
 ];
 
 const errors = [];
+const overflow = [];
 const browser = await chromium.launch();
 try {
   for (const size of sizes) {
@@ -48,7 +56,6 @@ try {
     });
     page.on("pageerror", (e) => errors.push(`[${size.tag}] pageerror: ${e.message}`));
 
-    // One session so the mock world carries the demo state from the board to the bench.
     for (const sc of screens) {
       if (sc.path) {
         const sep = sc.path.includes("?") ? "&" : "?";
@@ -61,6 +68,19 @@ try {
       }
       if (sc.prep === "demo" && mode === "mock") await playDemo(page);
       if (sc.wait) await page.waitForTimeout(sc.wait);
+      const wide = await page.evaluate(() => {
+        const w = document.documentElement.scrollWidth - document.documentElement.clientWidth;
+        const culprits = [];
+        if (w > 0) {
+          for (const el of document.querySelectorAll("body *")) {
+            const r = el.getBoundingClientRect();
+            if (r.right > document.documentElement.clientWidth + 1 && r.width > 0) culprits.push(`${el.tagName.toLowerCase()}.${String(el.className).split(" ")[0]} right=${Math.round(r.right)}`);
+            if (culprits.length >= 5) break;
+          }
+        }
+        return { w, culprits };
+      });
+      if (wide.w > 0) overflow.push(`[${size.tag}] ${sc.name}: page is ${wide.w}px wider than the viewport (${wide.culprits.join("; ")})`);
       await page.screenshot({ path: path.join(out, `${sc.name}-${size.tag}.png`), fullPage: false });
       await page.screenshot({ path: path.join(out, `${sc.name}-${size.tag}-full.png`), fullPage: true });
       console.log(`shot ${sc.name} ${size.tag}`);
@@ -71,26 +91,32 @@ try {
   await browser.close();
 }
 
+if (overflow.length) {
+  console.log("\nHorizontal overflow:");
+  for (const o of overflow) console.log("  " + o);
+  process.exitCode = 1;
+} else {
+  console.log("\nNo horizontal overflow.");
+}
 if (errors.length) {
   console.log("\nConsole errors:");
   for (const e of errors) console.log("  " + e);
   process.exitCode = 1;
 } else {
-  console.log("\nNo console errors.");
+  console.log("No console errors.");
 }
 
-/** The demo: select CP07, pay, cut, unplug, restore; wait for the capture. */
+/** The demo, driven from the try-it strip: pay, cut, unplug, restore; wait for the capture. */
 async function playDemo(page) {
-  const plate = page.getByRole("button", { name: /Charger CP07/ }).first();
-  await plate.click();
-  await page.getByRole("button", { name: /Plug in and pay/ }).click();
+  const guide = page.getByLabel("Try it in four steps");
+  await guide.getByRole("button", { name: /Plug in and pay/ }).click();
   await page.getByRole("button", { name: /^Pay €50\.00$/ }).click();
   await page.waitForTimeout(7800); // 22 kW at 300x and €0.60/kWh: about €11.40 by the unplug
-  await page.getByRole("button", { name: /Cut cable/ }).click();
+  await guide.getByRole("button", { name: /Cut the cable/ }).click();
   await page.waitForTimeout(3400);
-  await page.getByRole("button", { name: /^Unplug$/ }).click();
+  await guide.getByRole("button", { name: /^Unplug/ }).click();
   await page.waitForTimeout(1500);
-  await page.getByRole("button", { name: /^Restore$/ }).click();
+  await guide.getByRole("button", { name: /Restore/ }).click();
   await page.waitForTimeout(5000);
   await page.evaluate(() => window.scrollTo(0, 0));
 }
