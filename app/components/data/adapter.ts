@@ -174,9 +174,11 @@ export interface ProbeCheck {
   group: "a" | "b" | "c" | "d";
   id: string;
   label: string;
-  pass: boolean;
+  /** null for a disclosed fact (reported, not judged). */
+  pass: boolean | null;
   applicable: boolean;
-  verdict: "pass" | "fail" | "local: not applicable";
+  /** "disclosed": a fact reported without a verdict (TCP connect is accepted, DNS resolves). */
+  verdict: "pass" | "fail" | "disclosed" | "local: not applicable";
   layer?: string;
   detail: string;
   expected: string;
@@ -190,7 +192,10 @@ export interface ProbeReport {
   note: string;
   at: string;
   passed: number;
+  /** Judged checks that apply here ("disclosed" facts are not counted). */
   applicable: number;
+  /** Facts reported without a verdict (TCP connect accepted, DNS resolves). */
+  disclosed: number;
   checks: ProbeCheck[];
   sandbox: Record<string, unknown>;
   env: { world_process: string[]; flagged: string[]; sandbox_declared: string[] };

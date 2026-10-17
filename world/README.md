@@ -2,7 +2,7 @@
 
 The world that Once's agent writes payment code against: one Node process with an **OCPP 1.6J central system (CSMS)**, **12 simulated public AC chargers** with real firmware quirks, a **cuttable link proxy per charger**, a **sandboxed settlement program** (`settle.js`) that turns the charger traffic into capture intents, a **payment authority model** with Stripe's manual-capture semantics, and a **seeded fault-scenario runner** that proves a `settle.js` exactly-once (or shows where it double-captures, strands a hold or bills the wrong amount).
 
-It runs locally and, bundled into a single file, inside a CreateOS sandbox with no internet: it opens connections only to `127.0.0.1`, holds no keys and never calls Stripe. It decides; the host executes the intents on Stripe with idempotency and reports Stripe's answers back.
+It runs locally and, bundled into a single file, inside a CreateOS sandbox whose egress allowlist is a single sinkhole (HTTP and HTTPS to any host off the allowlist are refused; DNS resolves; nothing secret is inside): it opens connections only to `127.0.0.1`, holds no keys and never calls Stripe. It decides; the host executes the intents on Stripe with idempotency and reports Stripe's answers back.
 
 ```
 node world/src/index.js          # dev, needs world/node_modules (npm install in world/)
@@ -19,7 +19,7 @@ Contents: [Architecture](#architecture) · [Chargers and quirks](#chargers-and-f
 ## Architecture
 
 ```
-                         one Node process (the CreateOS sandbox, egress = sinkhole)
+                         one Node process (the CreateOS sandbox, egress allowlist = sinkhole)
  ┌──────────────────────────────────────────────────────────────────────────────────┐
  │ CP01..CP12 firmware ──ws──> link proxy CPxx (cut/restore) ──tcp──┐               │
  │  (ocpp-rpc clients,          127.0.0.1:<ephemeral>               │               │
@@ -216,16 +216,19 @@ Every event has `{seq, at, type, ...}`:
 - `GET /agent/last` → `{ok, run}` (`run: null` until the first run).
 
 ### The boundary probe
-`POST /probe` → `{ok, ran_at, node, platform, pid, checks: [{group, id, label, pass, layer, detail, ms}], env: {names, flagged}, ms, world_uptime_s}`. One run at a time; about 1-4 s. It never touches the deployed program or the board.
+`POST /probe` → `{ok, ran_at, node, platform, pid, checks: [{group, id, label, pass, verdict, layer, detail, ms}], env: {names, flagged}, ms, world_uptime_s}`. `verdict` is `pass`, `fail` or `disclosed` (a fact reported without a verdict; `pass` is `null`); `ok` covers the judged checks. One run at a time; about 1-4 s. It never touches the deployed program or the board.
 
 | group | check | pass when |
 |---|---|---|
 | a | settle.js calls `fetch`, `require('fs')` (literal: refused by the loader; hidden as `globalThis['req'+'uire']`: undefined in the vm), `process.env`, `import/**/('node:fs')` (hidden from the loader pattern), `eval`, and the escape `({}).constructor.constructor('return process')()` | each throws inside the vm (or the loader refuses the file) |
 | b | settle.js runs `for (;;) {}` in `onEvent` | the call is stopped at the 1 s budget (0.9-3 s measured) |
-| c | the world process (outside the vm) opens TCP to `api.stripe.com:443` and resolves `example.com` (3 s timeout each) | both fail. They succeed on a laptop; the host marks them "local: not applicable" |
+| c | the world process (outside the vm): an HTTPS POST with a body to `https://api.stripe.com/v1/charges`, an HTTP POST with a body to `http://example.com/`, and an HTTP GET of a raw IP, `http://1.1.1.1/` (3 s timeout each) | no response to any of them (the allowlist filters by SNI/Host). They get answers on a laptop; the host marks them "local: not applicable" |
+| c, disclosed | a raw TCP connect to `api.stripe.com:443` (nothing sent) and a DNS lookup of `example.com` | verdict `disclosed`, `pass: null`: reported, not judged. In the sandbox both succeed: "TCP connect is not blocked: the allowlist filters by SNI/Host" and "DNS resolves: a known side channel; the world holds no keys or customer data to leak" |
 | d | the world's environment: variable names only, never values | no name and no value looks like a Stripe, model or CreateOS credential |
 
 The infinite-loop check blocks the world's event loop for about a second (chargers keep their queues; the CSMS answers late once).
+
+Measured inside the CreateOS sandbox `once-world` (egress `["sinkhole.invalid"]`) on 2026-10-17: every judged check passed; the HTTPS POST to Stripe was reset before TLS completed (ECONNRESET in ~60 ms), both HTTP requests were reset with no response (~50 ms); the raw TCP connect to `api.stripe.com:443` was accepted (14 ms) and `example.com` resolved, so those two are disclosed; the world process's environment held 10 variable names, none a key.
 
 ### Other
 - `POST /reset {settle?: "v1"}` → a clean board (new fleet, no holds, no history); keeps the current settle.js unless `settle: "v1"`. Version numbers keep increasing.
@@ -367,11 +370,11 @@ Results with the bundled programs (default 30 seeds):
 - **Settlement tick:** `POST /intents/claim` → execute each intent on Stripe (`kind: "capture"` → capture with `amount_to_capture = amount_cents`; `kind: "release"` → cancel) → `POST /intents/:id/result` with Stripe's answer verbatim. Claims are leased, so overlapping ticks never double-execute an intent.
 - **Idempotency key:** derive it from `payment_intent` + `episode_id` to let Stripe dedupe retries of the same decision. Note what that means for the demo: v1-naive keys episodes by transactionId, so under `dup_stop` its two intents share an `episode_id` and an idempotent replay would answer the second one with the first capture (no refusal, but still one capture); under `reboot_restart` the two intents have different `episode_id`s and Stripe refuses the second. Keying on the world intent `id` instead makes every duplicate decision visible as a Stripe refusal.
 - **Agent loop:** `PUT /settle` with the model's code (400 carries the loader error to feed back), then `POST /suite`, feed the failing scenarios' `notes` back to the model. `POST /suite {source}` dry-runs a candidate without deploying it; `POST /suite/trace {seed, source}` gives the full event feed for one seed.
-- **No egress:** the world binds `HOST:PORT` and the 12 proxies on `127.0.0.1:<ephemeral>`, and connects only to `127.0.0.1`. It has no keys and makes no outbound calls.
+- **Egress:** the world binds `HOST:PORT` and the 12 proxies on `127.0.0.1:<ephemeral>`, and connects only to `127.0.0.1` (except the probe's own deliberate attempts). It has no keys and makes no outbound calls. In the sandbox HTTP and HTTPS to any host off the allowlist are refused; DNS resolves; nothing secret is inside.
 
 ## Limits
 
-- `node:vm` is not a security boundary by itself. The sandbox removes every capability (no modules, no host objects cross the boundary, JSON-only I/O, no code generation, per-call timeouts) and the CreateOS microVM with no internet and no keys is the real boundary.
+- `node:vm` is not a security boundary by itself. The sandbox removes every capability (no modules, no host objects cross the boundary, JSON-only I/O, no code generation, per-call timeouts) and the CreateOS microVM (HTTP and HTTPS to any host off the allowlist are refused; DNS resolves; nothing secret is inside) with no keys is the real boundary.
 - The chargers are simulations built on real OCPP 1.6J message schemas and documented firmware behaviour, not vendor firmware. One connector per charger. Status messages generated while offline are not queued (the current status is sent on reconnect).
 - The runner checks the money outcome per hold; it does not check capture timing beyond the episode boundaries (an early capture shows up as underbilled).
 - Authorization expiry (7 days), incremental authorization and overcapture are not modeled.

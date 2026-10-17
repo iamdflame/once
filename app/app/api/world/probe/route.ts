@@ -12,12 +12,13 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-type Check = ProbeCheck & { applicable: boolean; verdict: "pass" | "fail" | "local: not applicable"; expected: string };
+/** Three states for the UI: pass, fail, disclosed (a fact, not judged); plus "local: not applicable". */
+type Check = Omit<ProbeCheck, "verdict"> & { applicable: boolean; verdict: "pass" | "fail" | "disclosed" | "local: not applicable"; expected: string };
 
 const EXPECTED: Record<string, string> = {
   a: "blocked inside the vm (or refused by the loader)",
   b: "stopped at the 1 s budget",
-  c: "fails: the CreateOS egress allowlist is a single sinkhole",
+  c: "no response: HTTP and HTTPS to any host off the CreateOS allowlist (a single sinkhole) are refused",
   d: "no Stripe, model or CreateOS key; sandbox egress locked",
 };
 
@@ -44,7 +45,13 @@ export async function POST() {
 
     const checks: Check[] = probe.checks.map((c) => {
       const applicable = !(local && c.group === "c");
-      return { ...c, applicable, verdict: !applicable ? "local: not applicable" : c.pass ? "pass" : "fail", expected: EXPECTED[c.group] ?? "" };
+      const disclosed = c.verdict === "disclosed";
+      return {
+        ...c,
+        applicable,
+        verdict: !applicable ? "local: not applicable" : disclosed ? "disclosed" : c.pass ? "pass" : "fail",
+        expected: disclosed ? "reported, not judged" : (EXPECTED[c.group] ?? ""),
+      };
     });
 
     // (d) the sandbox itself, as CreateOS reports it.
@@ -73,16 +80,18 @@ export async function POST() {
       if (checks[checks.length - 1].applicable) checks[checks.length - 1].verdict = "fail";
     }
 
-    const applicable = checks.filter((c) => c.applicable);
+    // Judged checks only: "disclosed" facts and not-applicable checks do not count.
+    const applicable = checks.filter((c) => c.applicable && c.verdict !== "disclosed");
     return {
-      ok: applicable.length > 0 && applicable.every((c) => c.pass),
+      ok: applicable.length > 0 && applicable.every((c) => c.pass === true),
       mode: local ? "local" : "createos",
       note: local
         ? "local world: the vm checks (a, b) and the environment check are real; the egress checks (c) succeed on a laptop and are not applicable, and there is no sandbox to ask CreateOS about"
-        : "run inside the CreateOS sandbox: the world process tried the network itself",
+        : "run inside the CreateOS sandbox: the world process tried the network itself. HTTP and HTTPS to any host off the allowlist are refused; a raw TCP connect is accepted and DNS resolves (disclosed); nothing secret is inside",
       at: new Date().toISOString(),
-      passed: applicable.filter((c) => c.pass).length,
+      passed: applicable.filter((c) => c.pass === true).length,
       applicable: applicable.length,
+      disclosed: checks.filter((c) => c.verdict === "disclosed").length,
       checks,
       sandbox: sb,
       world: { node: probe.node, platform: probe.platform, uptime_s: probe.world_uptime_s, probe_ms: probe.ms },

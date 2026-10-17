@@ -19,12 +19,12 @@ Scope: Once's runtime, where a language model writes code that decides when paym
  untrusted                         host (trusted)                 witness
  settle.js  --intents only-->  validate + execute  --idempotency key-->  Stripe
  (vm, no fs/net/process)       (keys live here)                           (refuses duplicates)
- inside a no-egress, no-keys sandbox
+ inside a no-keys sandbox: HTTP/HTTPS off the allowlist refused
 ```
 
 | Control | What it does | State |
 |---|---|---|
-| **No egress** | The world sandbox's egress allowlist is a single sinkhole entry. In the access spike the allowlist blocked Stripe, example.com and 1.1.1.1. Generated code cannot call out. | spiked; enforced by CreateOS |
+| **Egress allowlist** | The world sandbox's egress allowlist is a single sinkhole entry, and it filters by SNI/Host: HTTP and HTTPS to any host off the allowlist are refused; DNS resolves; nothing secret is inside. Measured from inside the sandbox by the live probe (`POST /api/world/probe`, 2026-10-17): an HTTPS POST to `api.stripe.com/v1/charges`, an HTTP POST to `example.com` and HTTP to `1.1.1.1` all got no response; a raw TCP connect is accepted and DNS resolves (both disclosed by the probe, not hidden). Generated code has no network API at all (`vm`). | live; enforced by CreateOS, checked by the probe |
 | **No keys in the world** | The Stripe key and the model key are never uploaded to the sandbox. The world process has nothing to leak. Only `world/` source and the generated `settle.js` are uploaded. | planned (by construction of the upload step) |
 | **`vm` isolation for `settle.js`** | The program is loaded fresh per run in a Node `vm` context with no `fs`, `net`, `process` or `require`; its globals are the event stream and an emit function. Output is a list of intents, validated for shape. | planned |
 | **Execution happens on the host** | The world only proposes `{episode_id, payment_intent, amount_cents}`. The host decides whether to execute: the PaymentIntent must belong to a known episode (created by the host's own Checkout), the amount must be at most the hold, and the episode must not already have a result. | planned |
@@ -36,7 +36,7 @@ Scope: Once's runtime, where a language model writes code that decides when paym
 
 | # | Threat | Response | Residual risk |
 |---|---|---|---|
-| T1 | Generated code attempts network exfiltration or a call to Stripe | No egress, no keys, `vm` with no net; any attempt fails or has nothing to send | Sandbox escape from a `vm` is possible in principle; then the attacker is in a keyless, egress-less microVM |
+| T1 | Generated code attempts network exfiltration or a call to Stripe | No keys, `vm` with no net; HTTP and HTTPS to any host off the allowlist are refused; any attempt fails or has nothing to send | Sandbox escape from a `vm` is possible in principle; then the attacker is in a keyless microVM where HTTP and HTTPS off the allowlist are refused, a raw TCP connect is accepted and DNS resolves: DNS is a known low-bandwidth side channel, and the world holds no keys or customer data to leak through it |
 | T2 | Generated code reads the filesystem or environment | No `fs`/`process` in the `vm`; the sandbox holds no secrets | same as T1 |
 | T3 | Generated code emits an intent for more than the hold | Host checks amount against the episode's hold; Stripe rejects `amount_to_capture` above the authorized amount | none beyond Stripe's own rules |
 | T4 | Generated code emits many intents or duplicate intents (bug or attack) | Idempotency key per intent and leased intents; host executes each intent at most once; Stripe refuses a second capture | a wrong-but-single capture (see T6) |
@@ -57,4 +57,4 @@ Scope: Once's runtime, where a language model writes code that decides when paym
 
 ## 6. Summary in one sentence
 
-The agent's code can only say "capture this much for this episode"; it cannot reach the internet, hold a key, or call Stripe, and even if the host and the code both misbehave, Stripe will not capture one authorization twice.
+The agent's code can only say "capture this much for this episode"; it has no network API, holds no key and cannot call Stripe (and the sandbox around it refuses HTTP and HTTPS to any host off the allowlist; DNS resolves; nothing secret is inside), and even if the host and the code both misbehave, Stripe will not capture one authorization twice.

@@ -1,6 +1,6 @@
 # Host server (`app/lib`, `app/app/api`)
 
-The host runs the Stripe side and the agent; the world (`world/`) runs inside one CreateOS sandbox with no internet and no keys. The world decides, the host executes each decision on Stripe exactly once, and Stripe is the witness. The host never runs code the model wrote: candidates go to the world as text and run inside the sandbox.
+The host runs the Stripe side and the agent; the world (`world/`) runs inside one CreateOS sandbox with no keys, where HTTP and HTTPS to any host off the egress allowlist are refused (DNS resolves; nothing secret is inside). The world decides, the host executes each decision on Stripe exactly once, and Stripe is the witness. The host never runs code the model wrote: candidates go to the world as text and run inside the sandbox.
 
 ```
 browser ──> /api/* (Next.js, Node runtime) ──https──> CreateOS ingress :8080 ──> world (CSMS, fleet, settle.js, suite)
@@ -43,7 +43,7 @@ browser ──> /api/* (Next.js, Node runtime) ──https──> CreateOS ingre
 ## CreateOS orchestration
 
 - One sandbox, `once-world` (`s-1vcpu-1gb`, rootfs `devbox:1`, Ubuntu 24.04 with Node 24), reused by name.
-- **Egress:** allowlist `["sinkhole.invalid"]`, set at create time and re-asserted on every ensure. An empty list would mean open. Verified from inside: `curl https://api.stripe.com` and `http://1.1.1.1` both fail; no Stripe variable exists in the box.
+- **Egress:** allowlist `["sinkhole.invalid"]`, set at create time and re-asserted on every ensure. An empty list would mean open. Verified from inside: `curl https://api.stripe.com` and `http://1.1.1.1` both fail; no Stripe variable exists in the box. The allowlist filters by SNI/Host: a raw TCP connect is accepted and DNS resolves (the probe discloses both).
 - **Ingress:** `ingress_enabled: true`; the world is reached at `previewUrl(8080)`, `https://<id>-8080.app.sb.createos.sh` (valid TLS; the host falls back to plain http only if the certificate fails). It is reachable from outside, which is how the host talks to it.
 - **Start:** uploads `world.cjs` only when its sha256 differs from `/tmp/once/world.sha`, then starts `node /tmp/once/world.cjs` as a CreateOS managed process (env inline, because `processes.create` only accepts env keys declared at creation; managed processes survive pause/resume). Redeploy of the 2 MB bundle: about 18 s from paused, 3.5 s warm.
 - **Quota (free plan: 1 concurrent, 10 creates per rolling 24 h):** creates are counted from the API's own sandbox list (`created_at` in the last 24 h, destroyed boxes included) and refused locally at 10; one create per host process per 10 minutes at most; every create is logged with the running count. A box is never destroyed by the host.
@@ -129,7 +129,8 @@ When a run ends (any outcome), the host posts its record to the world (`POST /ag
 
 - (a) settle.js reaching for `fetch`, `require('fs')` (literal and hidden), `process.env`, `import()` (hidden from the loader pattern), `eval`, and the `({}).constructor.constructor('return process')()` escape: each must throw inside the vm.
 - (b) `for (;;) {}` in `onEvent`: stopped at the 1 s budget.
-- (c) the world process opens TCP to `api.stripe.com:443` and resolves `example.com`: both must fail in the sandbox. When `WORLD_URL` is a local address they succeed and are marked "local: not applicable".
+- (c) judged: from the world process, an HTTPS POST with a body to `https://api.stripe.com/v1/charges`, an HTTP POST with a body to `http://example.com/`, and HTTP to `http://1.1.1.1/` must all get no response (the allowlist filters by SNI/Host). Disclosed (verdict `disclosed`, `pass: null`, not counted in `ok`): a raw TCP connect to `api.stripe.com:443` is accepted and `example.com` resolves. When `WORLD_URL` is a local address all of (c) is "local: not applicable".
+- Verdicts are `pass`, `fail`, `disclosed` or `local: not applicable`; `passed`/`applicable` count judged checks only, `disclosed` counts the facts.
 - (d) no credential-like variable name or value in the world process (names only, never values); CreateOS's own report of the sandbox: egress exactly `["sinkhole.invalid"]`, env names stored on the box.
 
 `ok` is true when every applicable check passes.

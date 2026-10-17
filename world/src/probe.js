@@ -5,10 +5,14 @@
 //       eval, plus the classic vm escape through the Function constructor: each must be
 //       blocked inside the vm (or refused by the loader before it runs);
 //   (b) a settle.js with an infinite loop: it must be stopped at the 1 s call budget;
-//   (c) from the world process itself (no vm): a TCP connection to api.stripe.com:443 and
-//       a DNS lookup of example.com. In the CreateOS sandbox both must fail (the egress
-//       allowlist is a single sinkhole); on a laptop they succeed, and the host marks them
-//       "local: not applicable";
+//   (c) from the world process itself (no vm), the ways data could actually leave: an
+//       HTTPS POST with a body to https://api.stripe.com/v1/charges, an HTTP POST with a
+//       body to http://example.com/, and HTTP to a raw IP (http://1.1.1.1/). Each must get
+//       no response: the CreateOS egress allowlist (a single sinkhole entry) filters by
+//       SNI / Host. Two facts are reported with the verdict "disclosed" (neither pass nor
+//       fail): a raw TCP connect to api.stripe.com:443 is accepted (measured 2026-10-17:
+//       every connect is accepted, then reset at TLS / HTTP), and DNS resolves. On a laptop
+//       all of it succeeds and the host marks it "local: not applicable";
 //   (d) the world's own environment: variable NAMES only (never values), and whether any
 //       name or value looks like a Stripe, model or CreateOS credential.
 //
@@ -17,6 +21,8 @@
 // about one second (that is the point of the check).
 
 import net from 'node:net';
+import http from 'node:http';
+import https from 'node:https';
 import dns from 'node:dns';
 import { SettlerHost, SettleLoadError, CALL_TIMEOUT_MS } from './sandbox.js';
 
@@ -104,22 +110,48 @@ function runLoopCheck() {
   };
 }
 
+// A raw TCP connect (no bytes sent). Disclosed, not judged: the sandbox's egress proxy
+// accepts every connect and filters by SNI / Host afterwards.
 function tcpCheck(host, port, timeoutMs) {
   return new Promise((resolve) => {
     const t0 = now();
     let done = false;
-    let address = null;
+    const sock = net.connect({ host, port });
     const finish = (reached, detail) => {
       if (done) return;
       done = true;
       sock.destroy();
-      resolve({ reached, detail, address, ms: now() - t0 });
+      resolve({ reached, detail, ms: now() - t0 });
     };
-    const sock = net.connect({ host, port });
-    sock.once('lookup', (err, addr) => { if (!err) address = addr; });
     sock.once('connect', () => finish(true, `connected to ${sock.remoteAddress}:${sock.remotePort} (then closed; nothing was sent)`));
     sock.once('error', (e) => finish(false, `${e.code || e.name}: ${e.message}`));
     sock.setTimeout(timeoutMs, () => finish(false, `no connection within ${timeoutMs} ms`));
+  });
+}
+
+// A request with a real body. reached = any HTTP response came back (status line or more).
+function requestCheck(url, { method = 'GET', body = null, timeoutMs }) {
+  return new Promise((resolve) => {
+    const t0 = now();
+    let done = false;
+    const finish = (reached, detail) => { if (!done) { done = true; resolve({ reached, detail, ms: now() - t0 }); } };
+    const u = new URL(url);
+    const lib = u.protocol === 'https:' ? https : http;
+    const headers = { 'user-agent': 'once-world-probe' };
+    if (body != null) {
+      headers['content-type'] = 'application/x-www-form-urlencoded';
+      headers['content-length'] = Buffer.byteLength(body);
+    }
+    const req = lib.request(url, { method, headers, timeout: timeoutMs }, (res) => {
+      let n = 0;
+      res.on('data', (c) => { n += c.length; });
+      res.on('end', () => finish(true, `HTTP ${res.statusCode}: ${n} bytes came back`));
+      res.on('error', () => finish(true, `HTTP ${res.statusCode} (body cut)`));
+    });
+    req.on('timeout', () => { req.destroy(); finish(false, `no response within ${timeoutMs} ms`); });
+    req.on('error', (e) => finish(false, `no response: ${e.code || e.name}: ${e.message}`));
+    if (body != null) req.write(body);
+    req.end();
   });
 }
 
@@ -160,18 +192,29 @@ export async function runProbe({ timeoutMs = 3000 } = {}) {
   // event-loop pause of (b) does not distort the network timings.
   for (const c of VM_CHECKS) checks.push(runVmCheck(c));
   checks.push(runLoopCheck());
-  // (c) from the world process itself, outside the vm.
-  const [tcp, lookup] = await Promise.all([tcpCheck('api.stripe.com', 443, timeoutMs), dnsCheck('example.com', timeoutMs)]);
-  checks.push({
-    group: 'c', id: 'tcp-stripe', label: 'the world process opens TCP to api.stripe.com:443',
-    pass: !tcp.reached, layer: 'network', detail: tcp.detail + (tcp.address ? ` (DNS gave ${tcp.address})` : ''), ms: tcp.ms,
-  });
-  checks.push({ group: 'c', id: 'dns-example', label: 'the world process resolves example.com', pass: !lookup.reached, layer: 'network', detail: lookup.detail, ms: lookup.ms });
+  // (c) from the world process itself, outside the vm. Judged: the three ways data could
+  // actually leave (an HTTPS request to Stripe, an HTTP POST to a named host, HTTP to a raw
+  // IP). Disclosed, not judged: a raw TCP connect and a DNS lookup, which the sandbox allows.
+  const body = 'amount=100&currency=eur&source=tok_visa&description=once-world-probe';
+  const [toStripe, toHost, toIp, tcp, lookup] = await Promise.all([
+    requestCheck('https://api.stripe.com/v1/charges', { method: 'POST', body, timeoutMs }),
+    requestCheck('http://example.com/', { method: 'POST', body, timeoutMs }),
+    requestCheck('http://1.1.1.1/', { timeoutMs }),
+    tcpCheck('api.stripe.com', 443, timeoutMs),
+    dnsCheck('example.com', timeoutMs),
+  ]);
+  checks.push({ group: 'c', id: 'https-stripe', label: 'an HTTPS POST with a body to https://api.stripe.com/v1/charges gets no response (TLS/SNI refused)', pass: !toStripe.reached, verdict: toStripe.reached ? 'fail' : 'pass', layer: 'network', detail: toStripe.detail, ms: toStripe.ms });
+  checks.push({ group: 'c', id: 'http-post-host', label: 'an HTTP POST with a body to http://example.com/ gets no response', pass: !toHost.reached, verdict: toHost.reached ? 'fail' : 'pass', layer: 'network', detail: toHost.detail, ms: toHost.ms });
+  checks.push({ group: 'c', id: 'http-raw-ip', label: 'an HTTP request to a raw IP (http://1.1.1.1/) gets no response', pass: !toIp.reached, verdict: toIp.reached ? 'fail' : 'pass', layer: 'network', detail: toIp.detail, ms: toIp.ms });
+  checks.push({ group: 'c', id: 'tcp-stripe', label: 'TCP connect is not blocked: the allowlist filters by SNI/Host', pass: null, verdict: 'disclosed', layer: 'network', detail: `TCP to api.stripe.com:443: ${tcp.detail}`, ms: tcp.ms });
+  checks.push({ group: 'c', id: 'dns-example', label: 'DNS resolves: a known side channel; the world holds no keys or customer data to leak', pass: null, verdict: 'disclosed', layer: 'network', detail: `example.com: ${lookup.detail}`, ms: lookup.ms });
   // (d) the environment.
   const env = envCheck();
   checks.push({ group: 'd', id: env.id, label: env.label, pass: env.pass, layer: 'environment', detail: env.detail, ms: env.ms });
+  // verdict: pass | fail for judged checks, "disclosed" for facts reported without a verdict.
+  for (const c of checks) if (!c.verdict) c.verdict = c.pass ? 'pass' : 'fail';
   return {
-    ok: checks.every((c) => c.pass),
+    ok: checks.filter((c) => c.verdict !== 'disclosed').every((c) => c.pass),
     ran_at: Date.now(),
     node: process.version,
     platform: `${process.platform} ${process.arch}`,

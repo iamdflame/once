@@ -148,8 +148,19 @@ test('the probe: every vm escape is blocked and the infinite loop is stopped at 
   const loop = p.checks.find((c) => c.id === 'infinite-loop');
   assert.equal(loop.pass, true, loop.detail);
   assert.ok(loop.ms >= 900 && loop.ms < 3000);
-  assert.ok(p.checks.find((c) => c.id === 'tcp-stripe'));
-  assert.ok(p.checks.find((c) => c.id === 'dns-example'));
+  // (c): three judged ways data could leave, two disclosed facts. On this machine the
+  // requests may well get answers (no egress block here); only the shape is checked.
+  for (const id of ['https-stripe', 'http-post-host', 'http-raw-ip']) {
+    const c = p.checks.find((x) => x.id === id);
+    assert.ok(c, id);
+    assert.ok(['pass', 'fail'].includes(c.verdict));
+  }
+  for (const id of ['tcp-stripe', 'dns-example']) {
+    const c = p.checks.find((x) => x.id === id);
+    assert.equal(c.verdict, 'disclosed');
+    assert.equal(c.pass, null);
+  }
+  assert.equal(p.ok, p.checks.filter((c) => c.verdict !== 'disclosed').every((c) => c.pass === true));
   const env = p.checks.find((c) => c.id === 'env-keys');
   assert.ok(Array.isArray(p.env.names) && p.env.names.length > 0);
   assert.ok(!JSON.stringify(p).includes(process.env.PATH ?? '\u0000'), 'values are never reported');

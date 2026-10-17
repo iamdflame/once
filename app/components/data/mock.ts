@@ -811,6 +811,7 @@ export class MockWorld implements WorldAdapter {
       group, id, label, pass: true, applicable: true, verdict: "pass" as const, layer, detail, expected, ms,
     });
     const a = "blocked inside the vm (or refused by the loader)";
+    const c = "no response: HTTP and HTTPS to any host off the CreateOS allowlist (a single sinkhole) are refused";
     const checks = [
       mk("a", "fetch", "settle.js calls fetch('https://api.stripe.com/v1/charges')", "blocked: ReferenceError: fetch is not defined", a, 3.2, "vm"),
       mk("a", "require-literal", "settle.js contains require('fs')", "refused before it ran: settle.js cannot import or require anything", a, 1, "loader"),
@@ -820,18 +821,23 @@ export class MockWorld implements WorldAdapter {
       mk("a", "eval", "settle.js calls eval('1 + 1')", "blocked: EvalError: Code generation from strings disallowed for this context", a, 1, "vm"),
       mk("a", "function-escape", "settle.js tries the vm escape ({}).constructor.constructor('return process')()", "blocked: EvalError: Code generation from strings disallowed for this context", a, 1.1, "vm"),
       mk("b", "infinite-loop", "settle.js runs for (;;) {} in onEvent (budget 1000 ms per call)", "stopped after 1006 ms: settle.js took longer than 1000 ms on one event and was stopped", "stopped at the 1 s budget", 1006, "vm"),
-      mk("c", "tcp-stripe", "the world process opens TCP to api.stripe.com:443", "no connection within 3000 ms", "fails: the CreateOS egress allowlist is a single sinkhole", 3001, "network"),
-      mk("c", "dns-example", "the world process resolves example.com", "ENOTFOUND: getaddrinfo ENOTFOUND example.com", "fails: the CreateOS egress allowlist is a single sinkhole", 12, "network"),
+      mk("c", "https-stripe", "an HTTPS POST with a body to https://api.stripe.com/v1/charges gets no response (TLS/SNI refused)", "no response: ECONNRESET: Client network socket disconnected before secure TLS connection was established", c, 62, "network"),
+      mk("c", "http-post-host", "an HTTP POST with a body to http://example.com/ gets no response", "no response: ECONNRESET: socket hang up", c, 48, "network"),
+      mk("c", "http-raw-ip", "an HTTP request to a raw IP (http://1.1.1.1/) gets no response", "no response: ECONNRESET: socket hang up", c, 49, "network"),
+      { ...mk("c", "tcp-stripe", "TCP connect is not blocked: the allowlist filters by SNI/Host", "TCP to api.stripe.com:443: connected (then closed; nothing was sent)", "reported, not judged", 14, "network"), pass: null, verdict: "disclosed" as const },
+      { ...mk("c", "dns-example", "DNS resolves: a known side channel; the world holds no keys or customer data to leak", "example.com: resolved", "reported, not judged", 13, "network"), pass: null, verdict: "disclosed" as const },
       mk("d", "env-keys", "no Stripe, model or CreateOS key in the world process environment (names only, never values)", "9 variables, none named or valued like a key", "no Stripe, model or CreateOS key; sandbox egress locked", 0, "environment"),
       mk("d", "sandbox-egress", "CreateOS reports the world sandbox's egress allowlist", 'egress ["sinkhole.invalid"] (mock)', 'exactly ["sinkhole.invalid"]', 0, "createos"),
     ];
+    const judged = checks.filter((x) => x.verdict !== "disclosed");
     return {
       ok: true,
       mode: "mock",
       note: "in-browser mock: these lines show the shape of a sandbox run; nothing was probed",
       at: new Date().toISOString(),
-      passed: checks.length,
-      applicable: checks.length,
+      passed: judged.length,
+      applicable: judged.length,
+      disclosed: checks.length - judged.length,
       checks,
       sandbox: { mode: "mock", egress: ["sinkhole.invalid"] },
       env: { world_process: ["HOME", "HOSTNAME", "HOST", "NODE_ENV", "PATH", "PORT", "PWD", "SHLVL", "STATE_DIR"], flagged: [], sandbox_declared: ["HOST", "PORT"] },

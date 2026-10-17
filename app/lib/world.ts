@@ -84,7 +84,8 @@ export type WorldHold = {
   [k: string]: unknown;
 };
 
-export type ProbeCheck = { group: "a" | "b" | "c" | "d"; id: string; label: string; pass: boolean; layer?: string; detail: string; ms: number };
+/** verdict "disclosed": a fact reported without pass or fail (pass is null). */
+export type ProbeCheck = { group: "a" | "b" | "c" | "d"; id: string; label: string; pass: boolean | null; verdict?: "pass" | "fail" | "disclosed"; layer?: string; detail: string; ms: number };
 
 export type WorldProbe = {
   ok: boolean;

@@ -2264,8 +2264,8 @@ var require_websocket = __commonJS({
   "node_modules/ws/lib/websocket.js"(exports2, module2) {
     "use strict";
     var EventEmitter = require("events");
-    var https = require("https");
-    var http2 = require("http");
+    var https2 = require("https");
+    var http3 = require("http");
     var net3 = require("net");
     var tls = require("tls");
     var { randomBytes, createHash } = require("crypto");
@@ -2820,7 +2820,7 @@ var require_websocket = __commonJS({
       }
       const defaultPort = isSecure ? 443 : 80;
       const key = randomBytes(16).toString("base64");
-      const request = isSecure ? https.request : http2.request;
+      const request = isSecure ? https2.request : http3.request;
       const protocolSet = /* @__PURE__ */ new Set();
       let perMessageDeflate;
       opts.createConnection = opts.createConnection || (isSecure ? tlsConnect : netConnect);
@@ -3316,7 +3316,7 @@ var require_websocket_server = __commonJS({
   "node_modules/ws/lib/websocket-server.js"(exports2, module2) {
     "use strict";
     var EventEmitter = require("events");
-    var http2 = require("http");
+    var http3 = require("http");
     var { Duplex } = require("stream");
     var { createHash } = require("crypto");
     var extension = require_extension();
@@ -3397,8 +3397,8 @@ var require_websocket_server = __commonJS({
           );
         }
         if (options.port != null) {
-          this._server = http2.createServer((req, res) => {
-            const body = http2.STATUS_CODES[426];
+          this._server = http3.createServer((req, res) => {
+            const body = http3.STATUS_CODES[426];
             res.writeHead(426, {
               "Content-Length": body.length,
               "Content-Type": "text/plain"
@@ -3687,7 +3687,7 @@ var require_websocket_server = __commonJS({
       this.destroy();
     }
     function abortHandshake(socket, code, message, headers) {
-      message = message || http2.STATUS_CODES[code];
+      message = message || http3.STATUS_CODES[code];
       headers = {
         Connection: "close",
         "Content-Type": "text/html",
@@ -3696,7 +3696,7 @@ var require_websocket_server = __commonJS({
       };
       socket.once("finish", socket.destroy);
       socket.end(
-        `HTTP/1.1 ${code} ${http2.STATUS_CODES[code]}\r
+        `HTTP/1.1 ${code} ${http3.STATUS_CODES[code]}\r
 ` + Object.keys(headers).map((h) => `${h}: ${headers[h]}`).join("\r\n") + "\r\n\r\n" + message
       );
     }
@@ -49014,10 +49014,10 @@ var require_standard_validators = __commonJS({
 // node_modules/ocpp-rpc/lib/ws-util.js
 var require_ws_util = __commonJS({
   "node_modules/ocpp-rpc/lib/ws-util.js"(exports2, module2) {
-    var http2 = require("http");
+    var http3 = require("http");
     function abortHandshake(socket, code, message, headers) {
       if (socket.writable) {
-        message = message || http2.STATUS_CODES[code];
+        message = message || http3.STATUS_CODES[code];
         headers = {
           Connection: "close",
           "Content-Type": "text/html",
@@ -49025,7 +49025,7 @@ var require_ws_util = __commonJS({
           ...headers
         };
         socket.write(
-          `HTTP/1.1 ${code} ${http2.STATUS_CODES[code]}\r
+          `HTTP/1.1 ${code} ${http3.STATUS_CODES[code]}\r
 ` + Object.keys(headers).map((h) => `${h}: ${headers[h]}`).join("\r\n") + "\r\n\r\n" + message
         );
       }
@@ -50323,7 +50323,7 @@ var require_ocpp_rpc = __commonJS({
 });
 
 // src/live.js
-var import_node_http = __toESM(require("node:http"), 1);
+var import_node_http2 = __toESM(require("node:http"), 1);
 var import_node_fs = __toESM(require("node:fs"), 1);
 var import_node_path = __toESM(require("node:path"), 1);
 var import_ocpp_rpc2 = __toESM(require_ocpp_rpc(), 1);
@@ -52526,6 +52526,8 @@ var V1_NAIVE_SOURCE = "// settle.js v1 (naive): capture on every StopTransaction
 
 // src/probe.js
 var import_node_net2 = __toESM(require("node:net"), 1);
+var import_node_http = __toESM(require("node:http"), 1);
+var import_node_https = __toESM(require("node:https"), 1);
 var import_node_dns = __toESM(require("node:dns"), 1);
 function probeSource(attempt) {
   return `export function createSettler() {
@@ -52612,20 +52614,50 @@ function tcpCheck(host, port, timeoutMs) {
   return new Promise((resolve) => {
     const t0 = now();
     let done = false;
-    let address = null;
+    const sock = import_node_net2.default.connect({ host, port });
     const finish = (reached, detail) => {
       if (done) return;
       done = true;
       sock.destroy();
-      resolve({ reached, detail, address, ms: now() - t0 });
+      resolve({ reached, detail, ms: now() - t0 });
     };
-    const sock = import_node_net2.default.connect({ host, port });
-    sock.once("lookup", (err, addr) => {
-      if (!err) address = addr;
-    });
     sock.once("connect", () => finish(true, `connected to ${sock.remoteAddress}:${sock.remotePort} (then closed; nothing was sent)`));
     sock.once("error", (e) => finish(false, `${e.code || e.name}: ${e.message}`));
     sock.setTimeout(timeoutMs, () => finish(false, `no connection within ${timeoutMs} ms`));
+  });
+}
+function requestCheck(url, { method = "GET", body = null, timeoutMs }) {
+  return new Promise((resolve) => {
+    const t0 = now();
+    let done = false;
+    const finish = (reached, detail) => {
+      if (!done) {
+        done = true;
+        resolve({ reached, detail, ms: now() - t0 });
+      }
+    };
+    const u = new URL(url);
+    const lib = u.protocol === "https:" ? import_node_https.default : import_node_http.default;
+    const headers = { "user-agent": "once-world-probe" };
+    if (body != null) {
+      headers["content-type"] = "application/x-www-form-urlencoded";
+      headers["content-length"] = Buffer.byteLength(body);
+    }
+    const req = lib.request(url, { method, headers, timeout: timeoutMs }, (res) => {
+      let n = 0;
+      res.on("data", (c) => {
+        n += c.length;
+      });
+      res.on("end", () => finish(true, `HTTP ${res.statusCode}: ${n} bytes came back`));
+      res.on("error", () => finish(true, `HTTP ${res.statusCode} (body cut)`));
+    });
+    req.on("timeout", () => {
+      req.destroy();
+      finish(false, `no response within ${timeoutMs} ms`);
+    });
+    req.on("error", (e) => finish(false, `no response: ${e.code || e.name}: ${e.message}`));
+    if (body != null) req.write(body);
+    req.end();
   });
 }
 function dnsCheck(name, timeoutMs) {
@@ -52667,21 +52699,24 @@ async function runProbe({ timeoutMs = 3e3 } = {}) {
   const checks = [];
   for (const c of VM_CHECKS) checks.push(runVmCheck(c));
   checks.push(runLoopCheck());
-  const [tcp, lookup] = await Promise.all([tcpCheck("api.stripe.com", 443, timeoutMs), dnsCheck("example.com", timeoutMs)]);
-  checks.push({
-    group: "c",
-    id: "tcp-stripe",
-    label: "the world process opens TCP to api.stripe.com:443",
-    pass: !tcp.reached,
-    layer: "network",
-    detail: tcp.detail + (tcp.address ? ` (DNS gave ${tcp.address})` : ""),
-    ms: tcp.ms
-  });
-  checks.push({ group: "c", id: "dns-example", label: "the world process resolves example.com", pass: !lookup.reached, layer: "network", detail: lookup.detail, ms: lookup.ms });
+  const body = "amount=100&currency=eur&source=tok_visa&description=once-world-probe";
+  const [toStripe, toHost, toIp, tcp, lookup] = await Promise.all([
+    requestCheck("https://api.stripe.com/v1/charges", { method: "POST", body, timeoutMs }),
+    requestCheck("http://example.com/", { method: "POST", body, timeoutMs }),
+    requestCheck("http://1.1.1.1/", { timeoutMs }),
+    tcpCheck("api.stripe.com", 443, timeoutMs),
+    dnsCheck("example.com", timeoutMs)
+  ]);
+  checks.push({ group: "c", id: "https-stripe", label: "an HTTPS POST with a body to https://api.stripe.com/v1/charges gets no response (TLS/SNI refused)", pass: !toStripe.reached, verdict: toStripe.reached ? "fail" : "pass", layer: "network", detail: toStripe.detail, ms: toStripe.ms });
+  checks.push({ group: "c", id: "http-post-host", label: "an HTTP POST with a body to http://example.com/ gets no response", pass: !toHost.reached, verdict: toHost.reached ? "fail" : "pass", layer: "network", detail: toHost.detail, ms: toHost.ms });
+  checks.push({ group: "c", id: "http-raw-ip", label: "an HTTP request to a raw IP (http://1.1.1.1/) gets no response", pass: !toIp.reached, verdict: toIp.reached ? "fail" : "pass", layer: "network", detail: toIp.detail, ms: toIp.ms });
+  checks.push({ group: "c", id: "tcp-stripe", label: "TCP connect is not blocked: the allowlist filters by SNI/Host", pass: null, verdict: "disclosed", layer: "network", detail: `TCP to api.stripe.com:443: ${tcp.detail}`, ms: tcp.ms });
+  checks.push({ group: "c", id: "dns-example", label: "DNS resolves: a known side channel; the world holds no keys or customer data to leak", pass: null, verdict: "disclosed", layer: "network", detail: `example.com: ${lookup.detail}`, ms: lookup.ms });
   const env = envCheck();
   checks.push({ group: "d", id: env.id, label: env.label, pass: env.pass, layer: "environment", detail: env.detail, ms: env.ms });
+  for (const c of checks) if (!c.verdict) c.verdict = c.pass ? "pass" : "fail";
   return {
-    ok: checks.every((c) => c.pass),
+    ok: checks.filter((c) => c.verdict !== "disclosed").every((c) => c.pass),
     ran_at: Date.now(),
     node: process.version,
     platform: `${process.platform} ${process.arch}`,
@@ -52786,7 +52821,7 @@ async function startWorld({
   });
   rpc.on("error", () => {
   });
-  const server = import_node_http.default.createServer((req, res) => {
+  const server = import_node_http2.default.createServer((req, res) => {
     handle(req, res).catch((e) => send(res, e.status || 500, { ok: false, error: e.message }));
   });
   server.on("upgrade", (req, socket, head) => {
