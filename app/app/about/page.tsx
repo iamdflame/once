@@ -56,7 +56,7 @@ export default function AboutPage() {
       <section className={`wrap ${s.stack}`} aria-labelledby="stack-h">
         <h2 id="stack-h" className={s.sheetTitle}>The stack</h2>
         <p className={s.stackLine}>
-          <b>Stripe Projects</b> provisions the stack and the identity: the CreateOS key, an LLM provider, the deployment. <b>CreateOS</b> runs the world in one sandbox with no egress and no keys: the CSMS, twelve OCPP 1.6J chargers with firmware quirks, the link proxies and the agent&apos;s
+          <b>Stripe Projects</b> provisions the stack and the identity: the CreateOS key, an LLM provider, the deployment. <b>CreateOS</b> runs the world in one sandbox with web egress locked to a sinkhole and no keys: the CSMS, twelve OCPP 1.6J chargers with firmware quirks, the link proxies and the agent&apos;s
           settlement program. <b>Stripe</b> holds €50 with manual capture through Checkout, captures once per plug-in episode with an idempotency key the host derives from the episode, and refuses anything more. The host is a Next.js app; the model writes code, never decisions. The product code
           started from an empty directory at kickoff; the research and planning happened before.
         </p>

@@ -4,7 +4,7 @@ import s from "@/components/shell/prose.module.css";
 
 export const metadata: Metadata = {
   title: "Security — Once",
-  description: "The threat model in one page: no egress, no keys in the sandbox, settle.js in a vm, captures executed by the host with idempotency keys, Stripe refuses duplicates. And what is not claimed.",
+  description: "The threat model in one page: web egress locked to a sinkhole, no keys in the sandbox, settle.js in a vm, captures executed by the host with idempotency keys, Stripe refuses duplicates. And what is not claimed.",
 };
 
 export default function SecurityPage() {
@@ -34,7 +34,7 @@ export default function SecurityPage() {
           <h2 id="controls">Controls, layered</h2>
           <dl className={s.rows}>
             <div>
-              <dt>No egress</dt>
+              <dt>Egress locked</dt>
               <dd>
                 The world sandbox&apos;s egress allowlist is a single sinkhole entry (<code>sinkhole.invalid</code>), set at create time and re-asserted on every ensure. An empty list would mean open. From inside, <code>curl https://api.stripe.com</code> and <code>http://1.1.1.1</code> both
                 fail. The <Link href="/status">status page</Link> reads the allowlist back from CreateOS.
@@ -90,7 +90,7 @@ export default function SecurityPage() {
               <tbody>
                 <tr>
                   <td>Generated code calls out or calls Stripe</td>
-                  <td>No egress, no keys, vm with no net</td>
+                  <td>Web egress refused, no keys, vm with no net</td>
                   <td>A vm escape lands in a keyless, egress-less microVM</td>
                 </tr>
                 <tr>

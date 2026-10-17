@@ -174,7 +174,7 @@ export function ProofView() {
               <small>
                 {sandbox.provider === "local"
                   ? "In development the world runs on the host. Deployed, it runs in a CreateOS sandbox whose allowlist holds a single sinkhole entry."
-                  : "A single sinkhole entry. Stripe, example.com and 1.1.1.1 are unreachable from inside: the world has no internet at all."}
+                  : "A single sinkhole entry. HTTP and HTTPS to Stripe, example.com and 1.1.1.1 are refused from inside (the allowlist filters by SNI/Host); DNS still resolves, and nothing secret is inside."}
               </small>
             </dd>
             <dt>Keys inside</dt>

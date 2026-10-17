@@ -56,7 +56,7 @@ export default function DocsPage() {
               The <b>agent</b> (a language model) writes the settlement program, <code>settle.js</code>: it reads the OCPP event stream and emits capture intents <code>{"{episode_id, payment_intent, amount_cents}"}</code>.
             </li>
             <li>
-              The program runs inside a <b>CreateOS sandbox</b> (the &ldquo;world&rdquo;) whose egress allowlist contains a single sinkhole, so it has no internet, and it holds no keys. Inside the same sandbox: a CSMS, 12 simulated chargers with documented firmware quirks, and a per-charger
+              The program runs inside a <b>CreateOS sandbox</b> (the &ldquo;world&rdquo;) whose egress allowlist contains a single sinkhole, so HTTP and HTTPS to any other host are refused (the allowlist filters by SNI/Host; DNS still resolves), and it holds no keys. Inside the same sandbox: a CSMS, 12 simulated chargers with documented firmware quirks, and a per-charger
               link proxy so any charger can be cut, restored or rebooted.
             </li>
             <li>
@@ -341,7 +341,7 @@ WORLD_URL=http://127.0.0.1:8080 npm run dev
               </thead>
               <tbody>
                 <tr>
-                  <td>No egress</td>
+                  <td>Egress locked (SNI/Host)</td>
                   <td>The sandbox&apos;s allowlist is a single sinkhole entry, re-asserted on every ensure. Generated code cannot call out.</td>
                 </tr>
                 <tr>

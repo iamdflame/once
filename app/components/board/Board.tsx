@@ -137,7 +137,7 @@ export function Board() {
           Cut the cable, pull the plug, <span className={s.nowrap}>bring it back.</span>
         </h1>
         <p className={s.lede}>
-          The charger reports the stop twice. Stripe captures once. Twelve simulated OCPP 1.6J chargers run inside a CreateOS sandbox with no internet; the agent&apos;s settlement code runs
+          The charger reports the stop twice. Stripe captures once. Twelve simulated OCPP 1.6J chargers run inside a CreateOS sandbox that holds no keys and refuses web traffic to anything off its allowlist; the agent&apos;s settlement code runs
           there too, and only capture intents leave.
         </p>
         <Guide charger={charger} reached={reached} captured={captured} busy={busy} onPay={onPay} onCmd={(op, id) => void onCmd({ op, charger: id })} />

@@ -2,7 +2,7 @@
 
 **Exactly-once payments for EV chargers.**
 
-Once is an agent that writes the hold-meter-capture payment code for public EV chargers, runs that code inside a CreateOS sandbox that has no internet and no keys, and proves it against a fleet of simulated OCPP chargers that it can cut, reboot and reconnect at will. Stripe is the witness: when the charger reports the stop twice, Stripe captures once and refuses the duplicate in its own words.
+Once is an agent that writes the hold-meter-capture payment code for public EV chargers, runs that code inside a CreateOS sandbox that holds no keys and refuses HTTP and HTTPS to anything off its allowlist, and proves it against a fleet of simulated OCPP chargers that it can cut, reboot and reconnect at will. Stripe is the witness: when the charger reports the stop twice, Stripe captures once and refuses the duplicate in its own words.
 
 > Cut the cable, pull the plug, bring it back. The charger reported the stop twice. Stripe captured once.
 
@@ -12,7 +12,7 @@ Status: built during the CreateOS x Stripe "agent that writes and runs its own c
 |---|---|
 | Stripe Projects stack (CreateOS, OpenRouter, Vercel) | provisioned, see `.projects/state.json` |
 | `app/` Next.js host and UI | **live** at https://once-seven.vercel.app (board, agent bench, proof; API routes; Stripe executor; agent loop) |
-| `world/` OCPP fleet, link proxy, scenario runner | **live** in the CreateOS sandbox `once-world` (no egress, no keys); 25/25 tests covering the scenario suite, vm escape attempts, the payment authority, the API over real OCPP WebSockets and the single-file bundle |
+| `world/` OCPP fleet, link proxy, scenario runner | **live** in the CreateOS sandbox `once-world` (web egress locked to a sinkhole, no keys); 25/25 tests covering the scenario suite, vm escape attempts, the payment authority, the API over real OCPP WebSockets and the single-file bundle |
 | Docs: architecture, threat model, business, roadmap | written, in `docs/` |
 
 ---
@@ -24,7 +24,7 @@ A charge-point operator that takes card payments at an unattended charger has to
 Once closes that loop:
 
 1. The **agent** (a language model) writes the settlement program, `settle.js`: it reads the OCPP event stream and emits capture intents `{episode_id, payment_intent, amount_cents}`.
-2. The program runs inside a **CreateOS sandbox** (the "world") that has an egress allowlist containing a single sinkhole, so it has no internet at all, and it holds no keys. Inside the same sandbox are a CSMS and 12 simulated chargers with documented firmware quirks, and a per-charger link proxy so any charger can be cut, restored or rebooted.
+2. The program runs inside a **CreateOS sandbox** (the "world") that has an egress allowlist containing a single sinkhole, so HTTP and HTTPS to any other host are refused (the allowlist filters by SNI/Host; raw TCP connects and DNS resolves, which the live probe discloses), and it holds no keys. Inside the same sandbox are a CSMS and 12 simulated chargers with documented firmware quirks, and a per-charger link proxy so any charger can be cut, restored or rebooted.
 3. A **scenario suite** (30 seeded fault scenarios) runs in the sandbox and reports `stranded`, `double` and `unbilled` per scenario. If a scenario is red the agent rewrites `settle.js` and the suite runs again (up to 3 attempts).
 4. Only **intents** leave the sandbox. The **host** executes each capture on Stripe with an idempotency key derived from the world's intent id (with the hold and episode) and reports Stripe's answer back. Stripe witnesses every capture.
 
@@ -35,7 +35,7 @@ Live: **https://once-seven.vercel.app** (Stripe test mode; pay with the test car
 1. **0:00** A grid of 12 chargers. Click charger 7 and pay a EUR 50 hold with `4242 4242 4242 4242` in Stripe Checkout. The tile reads "holding EUR 50"; in Stripe the PaymentIntent is *uncaptured*.
 2. **0:20** **Cut cable** on charger 7's link: the tile goes grey and the charger keeps metering offline. **Unplug** while offline, then **Restore**. The queued StopTransaction arrives twice, about 1.2 s apart. The ledger accepts one, one capture lands (for example EUR 11.40) and the rest of the hold is released. The receipt strip links the Stripe object.
 3. **0:50** **The agent writes the fix.** Flip the "reboot restarts the transaction" quirk. The naive v1 settlement tries to capture twice and Stripe refuses the second capture (shown verbatim). Press **Fix**: the agent writes v2 (an episode ledger keyed to the plug-in episode, not the OCPP `transactionId`), the suite runs 30 storms in the sandbox and prints `stranded 0 | double 0 | unbilled 0`. v2 is deployed and the diff is shown.
-4. **1:30** Why a sandbox: the world has no internet and no keys, the agent's code runs there, and only intents leave.
+4. **1:30** Why a sandbox: the world holds no keys and its web egress is locked, the agent's code runs there, and only intents leave.
 5. **1:50** The company: see [the company in five lines](#the-company-in-five-lines).
 
 ## Verify it yourself
@@ -101,7 +101,7 @@ flowchart LR
     AG[Agent loop: model writes settle.js]
     EX[Capture executor: idempotency key = intent id]
   end
-  subgraph World["World: one CreateOS sandbox, no internet, no keys"]
+  subgraph World["World: one CreateOS sandbox, web egress locked, no keys"]
     CSMS[CSMS - OCPP 1.6J over WebSocket]
     CH[12 simulated chargers with firmware quirks]
     LP[Per-charger link proxy: cut / restore / reboot]
@@ -148,7 +148,7 @@ The simulation uses invented fault rates (30% reboot-split, 15% lost Start, 5% l
 
 The code the agent writes is untrusted by construction, and it is the code that decides when money moves. So it never touches money.
 
-- The world sandbox has **no egress** (allowlist is a single sinkhole) and **no keys**: nothing to exfiltrate to and nothing to exfiltrate.
+- The world sandbox's web egress is **locked** (the allowlist is a single sinkhole; HTTP and HTTPS elsewhere are refused; DNS still resolves, a disclosed side channel) and it holds **no keys**: nothing worth exfiltrating.
 - `settle.js` runs in a Node `vm` with no `fs`, `net` or `process`; its only output is capture intents.
 - The **host** executes captures, with an idempotency key derived from the world's intent id (with the hold and episode), and bounds each intent by the hold.
 - **Stripe refuses duplicates**: one capture per authorization, regardless of what the settlement program or the host does.
