@@ -1,0 +1,195 @@
+/* The thermal receipt: a printer head, the paper, the tear-off. */
+
+.printer {
+  display: flex;
+  flex-direction: column;
+  min-height: 420px;
+  max-height: 560px;
+}
+
+.tall {
+  max-height: none;
+  min-height: 0;
+}
+
+.head {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 40px;
+  padding: 0 14px;
+  border-radius: 12px 12px 4px 4px;
+  background: linear-gradient(to bottom, oklch(0.46 0.012 240), oklch(0.36 0.012 240));
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.16),
+    0 6px 14px -8px oklch(0.2 0.02 240 / 0.6);
+  color: var(--ink-on-dark);
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.14em;
+}
+
+.headSlot {
+  flex: 1;
+  margin-left: 16px;
+  height: 6px;
+  border-radius: 3px;
+  background: oklch(0.2 0.01 240);
+  box-shadow: inset 0 1px 2px oklch(0 0 0 / 0.6);
+}
+
+.paper {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  margin: -6px 10px 0;
+  scrollbar-width: thin;
+  scrollbar-color: oklch(0.7 0.02 80) transparent;
+}
+
+.strip {
+  padding: 22px 18px 14px;
+  background:
+    linear-gradient(to bottom, oklch(0.9 0.01 85 / 0.5), transparent 24px),
+    var(--paper);
+  box-shadow:
+    inset 1px 0 0 oklch(0.3 0.02 60 / 0.06),
+    inset -1px 0 0 oklch(0.3 0.02 60 / 0.06),
+    0 10px 24px -14px oklch(0.3 0.03 70 / 0.35);
+  font-family: var(--font-code);
+  font-size: 13px;
+  line-height: 1.45;
+  color: oklch(0.25 0.01 60);
+}
+
+.title {
+  text-align: center;
+}
+
+.title h2 {
+  font-family: var(--font-code);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.title p {
+  margin-top: 4px;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.rule {
+  display: block;
+  height: 1px;
+  margin: 12px 0 10px;
+  background: repeating-linear-gradient(to right, oklch(0.35 0.01 60) 0 4px, transparent 4px 8px);
+}
+
+.lines {
+  list-style: none;
+}
+
+.empty {
+  padding: 24px 0 18px;
+  text-align: center;
+  color: var(--ink-mute);
+}
+
+.line {
+  padding: 7px 0;
+  border-bottom: 1px dotted oklch(0.3 0.02 60 / 0.15);
+  animation: print 420ms var(--ease-out) both;
+}
+
+.line:last-child {
+  border-bottom: 0;
+}
+
+@keyframes print {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+    clip-path: inset(0 0 100% 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    clip-path: inset(0 0 -4px 0);
+  }
+}
+
+.lineMain {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-weight: 700;
+}
+
+.lineText {
+  overflow-wrap: anywhere;
+}
+
+.lineAmt {
+  flex: none;
+}
+
+.line[data-kind="hold"] .lineMain {
+  color: var(--hold-amber-ink);
+}
+
+.line[data-kind="capture"] .lineMain {
+  color: var(--captured-green-ink);
+}
+
+.line[data-kind="released"] .lineMain {
+  color: var(--ink-soft);
+  font-weight: 500;
+}
+
+.line[data-kind="refused"] .lineMain {
+  color: var(--refused-carmine);
+  font-weight: 600;
+}
+
+.line[data-kind="refused"] {
+  background: linear-gradient(to right, var(--refused-carmine-soft), transparent);
+  margin: 0 -8px;
+  padding-inline: 8px;
+}
+
+.lineMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--ink-mute);
+}
+
+.lineMeta a {
+  color: var(--ink-soft);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 3px;
+}
+
+.lineMeta a:hover {
+  color: var(--ink);
+}
+
+.foot {
+  margin-top: 8px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--ink-mute);
+}
+
+.tear {
+  height: 14px;
+  background: var(--paper);
+  mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='14' viewBox='0 0 16 14'><path d='M0 0h16v4L8 14 0 4z' fill='black'/></svg>") repeat-x bottom / 16px 14px;
+  filter: drop-shadow(0 2px 2px oklch(0.3 0.03 70 / 0.15));
+}
