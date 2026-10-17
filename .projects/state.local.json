@@ -1,0 +1,119 @@
+{
+  "version": 4,
+  "project": {
+    "catalog": "prod",
+    "initializedAt": "2026-10-17T19:12:59.918Z",
+    "merchantDisplayName": null,
+    "merchantId": "acct_1RgrkAEKejb7pf1a",
+    "projectId": "project_61Vb0zjy251zzJEMb16SqFhWM5SQ9q8xW6ksql1aiO64",
+    "projectName": "once"
+  },
+  "providers": {
+    "createos": {
+      "accountRequestId": "fprvcnn_61Vb0r4fnoCIO7nwm16SqFhWM5SQ9q8xW6ksql1aiG9o",
+      "configuration": {},
+      "linkedAt": "2026-10-17T19:04:02.343Z",
+      "providerId": "prvdr_61V0eGC6sUPXoATb051se",
+      "providerName": "createos",
+      "redirectUrl": null,
+      "requestedAt": "2026-10-17T19:04:02.343Z",
+      "status": "complete"
+    },
+    "openrouter": {
+      "accountRequestId": "facctrq_61Vb10K1GlYwDotNU16SqFhWM5SQ9q8xW6ksql1aiNIG",
+      "configuration": {},
+      "linkedAt": "2026-10-17T19:13:37.788Z",
+      "providerId": "prvdr_61URImmFACEuDHEx651IO",
+      "providerName": "OpenRouter",
+      "redirectUrl": null,
+      "requestedAt": "2026-10-17T19:13:37.788Z",
+      "status": "complete"
+    },
+    "vercel": {
+      "accountRequestId": "facctrq_61Vb10TjrofTTq5nk16SqFhWM5SQ9q8xW6ksql1aiAVU",
+      "configuration": {},
+      "linkedAt": "2026-10-17T19:13:47.791Z",
+      "providerId": "prvdr_61ULUAr4zlQgZkvXY5LsG",
+      "providerName": "Vercel",
+      "redirectUrl": null,
+      "requestedAt": "2026-10-17T19:13:47.791Z",
+      "status": "complete"
+    }
+  },
+  "resources": {
+    "createos-plan": {
+      "configuration": {},
+      "createdAt": "2026-10-17T19:13:25.822Z",
+      "lastRevealedAt": "2026-10-17T19:13:26.509Z",
+      "lastStatus": "complete",
+      "livemode": true,
+      "name": "createos-plan",
+      "providerId": "prvdr_61V0eGC6sUPXoATb051se",
+      "providerName": "createos",
+      "resourceId": "fres_61Vb108zhemxvUDuy16SqFhWM5SQ9q8xW6ksql1ai2PA",
+      "serviceId": "free"
+    },
+    "createos-project": {
+      "configuration": {},
+      "createdAt": "2026-10-17T19:13:29.883Z",
+      "lastRevealedAt": "2026-10-17T19:13:30.606Z",
+      "lastStatus": "complete",
+      "livemode": true,
+      "name": "createos-project",
+      "providerId": "prvdr_61V0eGC6sUPXoATb051se",
+      "providerName": "createos",
+      "resourceId": "fres_61Vb10CoAup2pk8xk16SqFhWM5SQ9q8xW6ksql1aiGWO",
+      "serviceId": "project"
+    },
+    "openrouter-api": {
+      "configuration": {},
+      "createdAt": "2026-10-17T19:14:49.482Z",
+      "lastRevealedAt": "2026-10-17T19:14:50.198Z",
+      "lastStatus": "complete",
+      "livemode": true,
+      "name": "openrouter-api",
+      "providerId": "prvdr_61URImmFACEuDHEx651IO",
+      "providerName": "OpenRouter",
+      "resourceId": "fres_61Vb11Ukijs8ZVnQT16SqFhWM5SQ9q8xW6ksql1aiUbI",
+      "serviceId": "api"
+    },
+    "openrouter-plan": {
+      "configuration": {},
+      "createdAt": "2026-10-17T19:13:40.653Z",
+      "lastRevealedAt": "2026-10-17T19:13:41.487Z",
+      "lastStatus": "complete",
+      "livemode": true,
+      "name": "openrouter-plan",
+      "providerId": "prvdr_61URImmFACEuDHEx651IO",
+      "providerName": "OpenRouter",
+      "resourceId": "fres_61Vb10NKaKLw0wKOd16SqFhWM5SQ9q8xW6ksql1aiNCK",
+      "serviceId": "free"
+    },
+    "vercel-plan": {
+      "configuration": {},
+      "createdAt": "2026-10-17T19:13:49.806Z",
+      "lastRevealedAt": "2026-10-17T19:13:50.497Z",
+      "lastStatus": "complete",
+      "livemode": true,
+      "name": "vercel-plan",
+      "providerId": "prvdr_61ULUAr4zlQgZkvXY5LsG",
+      "providerName": "Vercel",
+      "resourceId": "fres_61Vb10W5vEuq44gln16SqFhWM5SQ9q8xW6ksql1aiKPI",
+      "serviceId": "hobby"
+    },
+    "vercel-project": {
+      "configuration": {
+        "name": "once"
+      },
+      "createdAt": "2026-10-17T19:14:13.569Z",
+      "lastRevealedAt": "2026-10-17T19:14:14.339Z",
+      "lastStatus": "complete",
+      "livemode": true,
+      "name": "vercel-project",
+      "providerId": "prvdr_61ULUAr4zlQgZkvXY5LsG",
+      "providerName": "Vercel",
+      "resourceId": "fres_61Vb10uxmsxc780oZ16SqFhWM5SQ9q8xW6ksql1ai1oW",
+      "serviceId": "project"
+    }
+  }
+}
