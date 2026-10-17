@@ -1,0 +1,190 @@
+// Shared shapes for the Once UI. The mock adapter and the live adapter both
+// produce these; the components never see raw world or Stripe JSON.
+
+export type Quirk =
+  | "queue_offline"
+  | "dup_stop"
+  | "reboot_restart"
+  | "stop_without_start"
+  | "meter_reset_on_reboot";
+
+export const QUIRKS: { id: Quirk; label: string; note: string }[] = [
+  { id: "queue_offline", label: "Queue while offline", note: "Transaction messages queue when the link is down and resend on reconnect." },
+  { id: "dup_stop", label: "Duplicate Stop", note: "A queued StopTransaction is delivered twice on reconnect, 1.2 s apart." },
+  { id: "reboot_restart", label: "Reboot restarts the transaction", note: "A reboot mid-session ends the transaction and starts a new one for the same plug-in." },
+  { id: "stop_without_start", label: "Stop without Start", note: "A StopTransaction arrives for a transaction the CSMS never saw start." },
+  { id: "meter_reset_on_reboot", label: "Meter resets on reboot", note: "The energy register restarts from zero after a reboot." },
+];
+
+export type LedStatus = "idle" | "charging" | "offline" | "holding" | "faulted";
+
+export type HoldStatus = "uncaptured" | "captured" | "released" | "refused";
+
+export interface Hold {
+  payment_intent: string;
+  checkout_session?: string;
+  amount_cents: number;
+  captured_cents?: number;
+  status: HoldStatus;
+  episode_id?: string;
+}
+
+export interface Charger {
+  id: string; // CP01..CP12
+  kw: number;
+  link: "up" | "cut" | "rebooting";
+  plugged: boolean;
+  /** Energy of the current or last episode, kWh. */
+  kwh: number;
+  /** Price of the current or last episode at the tariff, cents. */
+  cents: number;
+  transaction_id: number | null;
+  hold: Hold | null;
+  quirks: Record<Quirk, boolean>;
+  status: LedStatus;
+  queued: number;
+}
+
+export type EventKind = "ocpp" | "link" | "cmd" | "settle" | "stripe" | "world";
+
+export interface WorldEvent {
+  id: string;
+  t: number; // epoch ms
+  charger: string | null;
+  kind: EventKind;
+  dir?: "in" | "out" | "queued" | "dup";
+  text: string;
+}
+
+export type ReceiptKind = "hold" | "capture" | "released" | "refused" | "note";
+
+export interface ReceiptLine {
+  id: string;
+  t: number;
+  kind: ReceiptKind;
+  charger?: string;
+  amount_cents?: number;
+  payment_intent?: string;
+  stripe_url?: string;
+  text: string;
+}
+
+export interface Intent {
+  intent_id: string;
+  episode_id: string;
+  charger: string;
+  payment_intent: string;
+  amount_cents: number;
+  result?: { ok: boolean; status: string; error?: string; stripe_object?: string };
+}
+
+export interface Scenario {
+  seed: number;
+  faults: string[];
+  double: number;
+  stranded: number;
+  unbilled: number;
+  overbilled: number;
+  ok: boolean;
+}
+
+export interface SuiteReport {
+  version: string;
+  ran_at: number;
+  scenarios: Scenario[];
+  totals: { stranded: number; double: number; unbilled: number; overbilled: number; ok: number; count: number };
+}
+
+export interface Settle {
+  version: string;
+  source: string;
+  author: "shipped" | "agent";
+  loaded_at: number;
+}
+
+export type AgentEvent =
+  | { type: "status"; text: string }
+  | { type: "attempt"; n: number; of: number }
+  | { type: "model"; name: string; provider: string }
+  | { type: "thinking"; text: string }
+  | { type: "diff"; old: string; new: string; version: string }
+  | { type: "uploaded"; version: string }
+  | { type: "scenario"; scenario: Scenario; index: number; count: number }
+  | { type: "suite"; report: SuiteReport }
+  | { type: "done"; ok: boolean; version: string; attempts: number }
+  | { type: "error"; text: string };
+
+export interface Capture {
+  payment_intent: string;
+  charger: string;
+  episode_id: string;
+  amount_cents: number;
+  authorized_cents: number;
+  status: "succeeded" | "requires_capture" | "canceled" | "refused";
+  idempotency_key: string;
+  t: number;
+  error?: string;
+  url: string;
+}
+
+export interface SandboxInfo {
+  provider: "CreateOS" | "mock";
+  name: string;
+  rootfs: string;
+  egress: string[];
+  keys_inside: string[];
+  state: "running" | "paused" | "absent";
+  preview?: string;
+  creates_used?: string;
+}
+
+export interface Proof {
+  captures: Capture[];
+  suite: SuiteReport | null;
+  sandbox: SandboxInfo;
+  settle: Settle | null;
+}
+
+export interface Snapshot {
+  chargers: Charger[];
+  events: WorldEvent[];
+  receipt: ReceiptLine[];
+  intents: Intent[];
+  settle: Settle;
+  suite: SuiteReport | null;
+  sandbox: SandboxInfo;
+  tariff_cents_per_kwh: number;
+  connected: boolean;
+  error?: string;
+}
+
+export type Command =
+  | { op: "plug" | "unplug" | "cut" | "restore" | "reboot"; charger: string }
+  | { op: "quirk"; charger: string; quirk: Quirk; on: boolean };
+
+export interface CheckoutStart {
+  mode: "redirect" | "mock";
+  url?: string;
+  session_id?: string;
+}
+
+export type Mode = "mock" | "live";
+
+export const STRIPE_DASHBOARD = "https://dashboard.stripe.com/test/payments/";
+
+export function stripeUrl(pi: string): string {
+  return STRIPE_DASHBOARD + pi;
+}
+
+export function euro(cents: number): string {
+  const sign = cents < 0 ? "-" : "";
+  const v = Math.abs(cents);
+  return `${sign}€${(v / 100).toFixed(2)}`;
+}
+
+export function ledFor(c: Pick<Charger, "link" | "plugged" | "hold">): LedStatus {
+  if (c.link !== "up") return "offline";
+  if (c.plugged) return "charging";
+  if (c.hold && c.hold.status === "uncaptured") return "holding";
+  return "idle";
+}
