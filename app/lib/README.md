@@ -22,7 +22,7 @@ browser ──> /api/* (Next.js, Node runtime) ──https──> CreateOS ingre
 | `llm.ts` | Streaming model calls: Anthropic if `ANTHROPIC_API_KEY`, else OpenRouter free models with fallback and backoff |
 | `settle-interface.ts` | The settle.js contract, copied from `world/README.md` (`node scripts/sync-settle-interface.mjs` refreshes it) |
 | `diff.ts` | Line diff (LCS) for the settle.js diff the bench shows |
-| `proof.ts` | `/api/proof`: every capture attempt, each hold as Stripe reports it now, suite history |
+| `proof.ts` | `/api/proof`: every capture attempt, each hold as Stripe reports it now, holds per driver and every capture attributed to the driver whose energy it billed, suite history |
 | `errors.ts` | `route()` wrapper (errors become `{error, detail?}` with the right status), `describe()` |
 
 ## Environment
@@ -65,6 +65,8 @@ All routes are Node runtime, `force-dynamic`, JSON in and out unless noted. Erro
 | `GET /api/world/events?since=<seq>` | Proxy of world `GET /events` (`{events, last_seq, head_seq, truncated}`) |
 | `POST /api/world/suite {count?, seed?}` | Runs the 30-seed suite on the deployed settle.js inside the world. JSON `{version, ran_at, totals, scenarios}`; with `?stream=1` it streams the same NDJSON events as the agent (`status`, `scenario` x 30, `suite`) |
 | `GET /api/world/settle` | Proxy of world `GET /settle` (deployed source, version, name, sha256). Uploads only go through the agent |
+| `GET /api/world/suite/last` | The last suite the world ran on its deployed settle.js (world `GET /suite/last`), normalised like `/api/world/suite`: `{report: {version, ran_at, summary, totals, scenarios} \| null}`. It lives in the world, so the Bench can show results on load after a host cold start |
+| `POST /api/world/probe` | The boundary, shown live (below) |
 
 ### Stripe
 
@@ -73,9 +75,10 @@ All routes are Node runtime, `force-dynamic`, JSON in and out unless noted. Erro
 | `POST /api/checkout {charger}` | `charger`: `"CP07"` or `7`. Creates a Checkout Session: mode `payment`, EUR, one line item "Charging hold" €50.00, `payment_intent_data.capture_method = manual`, dynamic payment methods (no `payment_method_types`), `success_url = <origin>/?session_id={CHECKOUT_SESSION_ID}&charger=CP07`, `cancel_url = <origin>/?canceled=1&charger=CP07`. Returns `{id, url, charger, amount, currency}`; redirect the browser to `url` |
 | `GET /api/checkout/confirm?session_id=cs_...` | Retrieves the session and its PaymentIntent. When the PaymentIntent is `requires_capture`, binds it with world `POST /hold {charger, payment_intent, amount_cents: amount_capturable}` (once per PaymentIntent; the world is idempotent too). Returns `{session: {id, status, payment_status, amount_total, currency}, charger, payment_intent: {id, status, amount, amount_capturable, capture_method, dashboard_url}, hold, hold_error?}` |
 | `POST /api/settle/tick` | One settlement tick (below). Returns `{at, pending, processed: [CaptureRecord], coalesced?, error?, ms}` |
-| `GET /api/proof[?verify=0]` | `{captures, sandbox, settle, suite, attempts, holds, suites, world, world_error?}`. `holds` is each PaymentIntent as Stripe reports it now (`status, amount_authorized, amount_received, amount_capturable, latest_charge, dashboard_url, capture_attempts, captures_succeeded, refusals[]`); `captures` and `sandbox` match the UI's `Capture` and `SandboxInfo` types; `verify=0` skips the Stripe lookups |
+| `POST /api/hold/next {charger, driver?}` | **The next driver's test hold** (the wrong-driver demo). Creates and confirms a €50.00 manual-capture PaymentIntent server-side in Stripe test mode (`payment_method: pm_card_visa`, `automatic_payment_methods[enabled]=true`, `allow_redirects=never`, metadata `{app: "once", charger, driver}`) and binds it with world `POST /hold {driver}`. `driver` defaults to the letter after the holds already on that charger, at least `B`. Returns `{payment_intent, driver, charger, label: "Driver B's test hold: ...", test_mode: true, stripe: {id, status, amount, amount_capturable, dashboard_url}, hold}`. If the world refuses to bind it, the PaymentIntent is cancelled at once and the route answers 502 |
+| `GET /api/proof[?verify=0]` | `{captures, drivers, sandbox, settle, suite, attempts, holds, suites, world, world_error?}`. Every capture carries `driver` (whose hold), `energy_driver` / `energy_episode_id` (whose energy, from the world), `wrong_driver` and `story` ("Driver B was charged €4.17 for Driver A's energy; Stripe: succeeded"). `drivers` is one line per hold the world bound: `{driver, seq, charger, payment_intent, amount_authorized, amount_received, status (Stripe's), stranded, charged_for_driver, wrong_driver, story}`. `holds` now also covers holds with no attempt at all (a stranded one) and carries `driver`, `stranded`, `captured_for`. `holds` is each PaymentIntent as Stripe reports it now (`status, amount_authorized, amount_received, amount_capturable, latest_charge, dashboard_url, capture_attempts, captures_succeeded, refusals[]`); `captures` and `sandbox` match the UI's `Capture` and `SandboxInfo` types; `verify=0` skips the Stripe lookups |
 
-`CaptureRecord`: `{at, id (world intent id), intent_id (settle.js's), episode_id, charger, payment_intent, amount_cents, action: capture|release|rejected, ok, status, error (Stripe's message verbatim), code, replayed, idempotency_key, request_id, stripe_object: {id, status, amount, amount_received, amount_capturable, currency, latest_charge, dashboard_url}, reported, report_error?}`.
+`CaptureRecord`: `{at, id (world intent id), intent_id (settle.js's), episode_id, charger, payment_intent, amount_cents, driver, energy_driver, energy_episode_id, wrong_driver, action: capture|release|rejected, ok, status, error (Stripe's message verbatim), code, replayed, idempotency_key, request_id, stripe_object: {id, status, amount, amount_received, amount_capturable, currency, latest_charge, dashboard_url}, reported, report_error?}`.
 
 ### The settlement tick
 
@@ -117,6 +120,31 @@ Events (`AgentEvent` in `agent.ts`; names match the UI's types):
 | `uploaded` | `version`: the candidate passed and is now deployed |
 | `error` | `text` |
 | `done` | `ok, version (live settle.js version), attempts, model?, reason` |
+
+When a run ends (any outcome), the host posts its record to the world (`POST /agent/last`), which keeps it inside the sandbox: `{kind: "agent_run", ok, reason, provider, models, model, started_at, finished_at, ms, baseline: {version, summary, totals, ms}, attempts: [{n, model, provider, model_ms, plan, diff: {added, removed}, load_error?, suite: {summary, totals}, suite_ms, deployed?}], deployed: {version, suite} | null, version, final_diff: {attempt, added, removed, unified, source} | null, errors, timings: {baseline_ms, model_ms, suite_ms, total_ms}}`. `GET /api/agent/last` returns `{run}` (`null` before the first run). The CreateOS launch sets `STATE_DIR=/tmp/once`, so the record also survives a world restart.
+
+### The boundary probe
+
+`POST /api/world/probe` runs world `POST /probe` inside the sandbox and adds the sandbox's settings as CreateOS reports them. Response: `{ok, mode: local|createos, note, at, passed, applicable, checks: [{group, id, label, pass, applicable, verdict: pass|fail|"local: not applicable", layer, detail, expected, ms}], sandbox, world, env: {world_process (names), flagged, sandbox_declared (names)}, ms}`.
+
+- (a) settle.js reaching for `fetch`, `require('fs')` (literal and hidden), `process.env`, `import()` (hidden from the loader pattern), `eval`, and the `({}).constructor.constructor('return process')()` escape: each must throw inside the vm.
+- (b) `for (;;) {}` in `onEvent`: stopped at the 1 s budget.
+- (c) the world process opens TCP to `api.stripe.com:443` and resolves `example.com`: both must fail in the sandbox. When `WORLD_URL` is a local address they succeed and are marked "local: not applicable".
+- (d) no credential-like variable name or value in the world process (names only, never values); CreateOS's own report of the sandbox: egress exactly `["sinkhole.invalid"]`, env names stored on the box.
+
+`ok` is true when every applicable check passes.
+
+## The wrong-driver capture (`scripts/wrong-driver.mjs`)
+
+Under the naive v1 settle.js, a StopTransaction that arrives after the next driver paid is billed to the charger's latest hold. The script plays it against a local world and real Stripe test mode, twice:
+
+```bash
+PORT=8080 node world/dist/world.cjs
+cd app && WORLD_URL=http://127.0.0.1:8080 npm run dev
+cd app && node scripts/wrong-driver.mjs --host http://localhost:3000 --world http://127.0.0.1:8080
+```
+
+A holds €50 and charges on CP07, cut, A unplugs offline, `POST /api/hold/next` (driver B), restore, B charges and leaves, tick until settled. Under v1: one capture lands on B's PaymentIntent for A's energy and Stripe says succeeded, B's own capture is refused, A's hold is stranded. After `PUT /settle` with the reference episode ledger (tests only) and a reset: A is captured on A's hold for A's energy, B on B's for B's. The script releases v1's stranded test hold and resets the world to v1 at the end.
 
 ## Smoke test
 

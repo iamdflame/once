@@ -155,7 +155,8 @@ async function startWorld(sb: Sandbox, bundle: { bytes: Buffer; sha: string }, a
   // "[w]orld.cjs" so pkill does not match (and kill) the shell running it.
   await sb.sh(`pkill -f "${d}/[w]orld.cjs" || true`, { timeoutMs: 20_000 });
   // Env goes inline: processes.create only accepts env keys declared at sandbox creation.
-  const launch = `cd ${d} && PORT=${WORLD_SANDBOX.port} HOST=0.0.0.0 NODE_ENV=production exec node ${d}/world.cjs >> ${d}/world.log 2>&1`;
+  // STATE_DIR: the world keeps the last agent run in ${d}/agent-last.json across its own restarts.
+  const launch = `cd ${d} && PORT=${WORLD_SANDBOX.port} HOST=0.0.0.0 NODE_ENV=production STATE_DIR=${d} exec node ${d}/world.cjs >> ${d}/world.log 2>&1`;
   try {
     await sb.processes.create({ cmd: "sh", args: ["-c", launch], cwd: d });
   } catch (e) {
@@ -329,6 +330,61 @@ export function invalidateWorldCache() {
 
 export function cachedWorldInfo(): WorldInfo | undefined {
   return g.__onceWorldCache?.info;
+}
+
+/** The world sandbox's settings as CreateOS itself reports them (for the boundary probe). Env: names only. */
+export async function sandboxReport(): Promise<
+  | { mode: "local"; url: string }
+  | { mode: "createos"; found: false; creates_used_24h: number }
+  | {
+      mode: "createos";
+      found: true;
+      id: string;
+      name?: string;
+      status: string;
+      egress: string[];
+      egress_is_sinkhole_only: boolean;
+      ingress_enabled: boolean;
+      shape?: string;
+      rootfs?: string;
+      region?: string;
+      vcpu?: number;
+      mem_mib?: number;
+      created_at?: string;
+      running_at?: string;
+      env_names: string[];
+      creates_used_24h: number;
+    }
+> {
+  const local = env.worldUrl();
+  if (local) return { mode: "local", url: local };
+  const c = client();
+  const { box, createsUsed } = await findBox(c);
+  if (!box) return { mode: "createos", found: false, creates_used_24h: createsUsed };
+  await box.refresh().catch(() => {});
+  const eg = await box.getEgress();
+  const d = box.data;
+  const want = [...WORLD_SANDBOX.egress];
+  return {
+    mode: "createos",
+    found: true,
+    id: box.id,
+    name: box.name,
+    status: box.status,
+    egress: eg.egress ?? [],
+    // An empty list means "allow all"; only the single sinkhole entry means no internet.
+    egress_is_sinkhole_only: (eg.egress ?? []).length === want.length && want.every((x, i) => eg.egress[i] === x),
+    ingress_enabled: d.ingress_enabled,
+    shape: d.shape,
+    rootfs: d.rootfs,
+    region: d.region,
+    vcpu: d.vcpu,
+    mem_mib: d.mem_mib,
+    created_at: d.created_at,
+    running_at: d.running_at,
+    env_names: d.envs ?? [],
+    creates_used_24h: createsUsed,
+  };
 }
 
 /** Pause the world sandbox now (it also auto-pauses after 10 idle minutes). */

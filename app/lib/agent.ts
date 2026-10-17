@@ -176,8 +176,153 @@ function userPrompt(input: { current: string; report: string; trace: string; fee
     .join("\n\n");
 }
 
-/** Run the loop, emitting progress events. Never throws; failures arrive as events. */
+type SuiteSummary = { version?: string | number; summary?: string; totals: SuiteReport["totals"]; ms?: number };
+type AttemptRecord = {
+  n: number;
+  started_at: number;
+  model?: string;
+  provider?: string;
+  model_ms?: number;
+  plan?: string;
+  diff?: { added: number; removed: number };
+  load_error?: string;
+  suite?: SuiteSummary;
+  suite_ms?: number;
+  deployed?: boolean;
+};
+
+/** The record of one agent run that the world keeps (POST /agent/last): what the Bench shows on load. */
+export type AgentRunRecord = {
+  kind: "agent_run";
+  ok: boolean;
+  reason: string;
+  provider?: string;
+  models?: string[];
+  model?: string;
+  started_at: number;
+  finished_at: number;
+  ms: number;
+  baseline?: SuiteSummary;
+  attempts: AttemptRecord[];
+  deployed?: { version: string; suite?: SuiteSummary } | null;
+  version: string;
+  final_diff?: { attempt: number; added: number; removed: number; unified: string; source: string } | null;
+  errors: string[];
+  timings: { baseline_ms?: number; model_ms: number; suite_ms: number; total_ms: number };
+};
+
+const cap = (t: string, n = 60_000) => (t.length > n ? t.slice(0, n) + "\n... (truncated)" : t);
+const sum = (r: SuiteReport, ms?: number): SuiteSummary => ({ version: r.version, summary: r.summary, totals: r.totals, ...(ms !== undefined ? { ms } : {}) });
+
+/** Builds the run record from the event stream, so the loop itself stays as it is. */
+function recorder() {
+  const t0 = Date.now();
+  const rec: AgentRunRecord = { kind: "agent_run", ok: false, reason: "", started_at: t0, finished_at: t0, ms: 0, attempts: [], version: "", errors: [], timings: { model_ms: 0, suite_ms: 0, total_ms: 0 } };
+  let suiteFrom = t0;
+  const diffs = new Map<number, AgentRunRecord["final_diff"]>();
+  const cur = () => rec.attempts.at(-1);
+  return {
+    rec,
+    see(e: AgentEvent) {
+      const now = Date.now();
+      switch (e.type) {
+        case "status":
+          if (e.phase === "start") {
+            rec.provider = e.provider;
+            rec.models = e.models;
+          }
+          if (e.phase === "baseline" || e.phase === "suite") suiteFrom = now;
+          break;
+        case "attempt":
+          rec.attempts.push({ n: e.n, started_at: now });
+          break;
+        case "model": {
+          const a = cur();
+          rec.model = e.name;
+          if (a) Object.assign(a, { model: e.name, provider: e.provider });
+          break;
+        }
+        case "thinking": {
+          const a = cur();
+          if (a) Object.assign(a, { plan: e.text, model_ms: e.ms });
+          rec.timings.model_ms += e.ms;
+          break;
+        }
+        case "diff": {
+          const a = cur();
+          if (a) a.diff = { added: e.added, removed: e.removed };
+          diffs.set(e.attempt, { attempt: e.attempt, added: e.added, removed: e.removed, unified: cap(e.unified), source: cap(e.new) });
+          break;
+        }
+        case "suite": {
+          const ms = now - suiteFrom;
+          rec.timings.suite_ms += ms;
+          if (e.phase === "baseline") {
+            rec.baseline = sum(e.report, ms);
+            rec.timings.baseline_ms = ms;
+          } else if (e.phase === "attempt") {
+            const a = cur();
+            if (a) Object.assign(a, { suite: sum(e.report), suite_ms: ms });
+          } else if (rec.deployed) rec.deployed.suite = sum(e.report, ms);
+          break;
+        }
+        case "uploaded": {
+          const a = cur();
+          if (a) a.deployed = true;
+          rec.deployed = { version: e.version };
+          suiteFrom = now;
+          break;
+        }
+        case "error": {
+          rec.errors.push(e.text);
+          const a = cur();
+          if (a && /did not load/.test(e.text)) a.load_error = e.text;
+          break;
+        }
+        case "done":
+          rec.ok = e.ok;
+          rec.reason = e.reason;
+          rec.version = e.version;
+          if (e.model) rec.model = e.model;
+          break;
+        default:
+      }
+      if (e.type === "done" || e.type === "uploaded") {
+        const deployedAttempt = rec.attempts.find((a) => a.deployed)?.n;
+        rec.final_diff = (deployedAttempt ? diffs.get(deployedAttempt) : diffs.get(Math.max(0, ...diffs.keys()))) ?? null;
+      }
+    },
+    finish() {
+      rec.finished_at = Date.now();
+      rec.ms = rec.finished_at - t0;
+      rec.timings.total_ms = rec.ms;
+      if (!rec.deployed) rec.deployed = null;
+      return rec;
+    },
+  };
+}
+
+/**
+ * Run the loop, emitting progress events. Never throws; failures arrive as events.
+ * When it ends, the run's record goes to the world (POST /agent/last), which keeps it in
+ * the sandbox so the Bench can show the last real run after a host cold start.
+ */
 export async function runAgentFix(emit: (e: AgentEvent) => void, opts: { signal?: AbortSignal } = {}): Promise<void> {
+  const r = recorder();
+  try {
+    await runLoop((e) => {
+      r.see(e);
+      emit(e);
+    }, opts);
+  } finally {
+    const rec = r.finish();
+    if (rec.reason || rec.attempts.length || rec.baseline) {
+      await world.postAgentLast(rec as unknown as Record<string, unknown>).catch((e) => console.error("[once/agent] could not keep the run record in the world:", describe(e)));
+    }
+  }
+}
+
+async function runLoop(emit: (e: AgentEvent) => void, opts: { signal?: AbortSignal } = {}): Promise<void> {
   const deadline = Date.now() + BUDGET_MS;
   const plan = modelPlan();
   emit({ type: "status", phase: "start", text: `agent: ${plan.provider} (${plan.models.join(", ")}), up to ${MAX_ATTEMPTS} attempts`, provider: plan.provider, models: plan.models });
