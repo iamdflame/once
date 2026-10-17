@@ -6,6 +6,8 @@
 // It never opens a connection to anything but 127.0.0.1.
 
 import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
 import ocpp from 'ocpp-rpc';
 import { LiveClock } from './clock.js';
 import { WorldCore, httpError } from './core.js';
@@ -14,6 +16,7 @@ import { LinkProxy, LiveTransport } from './transport-live.js';
 import { validateSettleSource } from './sandbox.js';
 import { runSuite, runScenario, DEFAULT_SUITE_COUNT, DEFAULT_SUITE_SEED } from './runner.js';
 import { V1_NAIVE_SOURCE, V1_NAIVE_NAME } from './builtin-settlers.js';
+import { runProbe } from './probe.js';
 
 const { RPCServer, createRPCError } = ocpp;
 
@@ -32,12 +35,17 @@ export async function startWorld({
   settleSource = V1_NAIVE_SOURCE,
   settleName = V1_NAIVE_NAME,
   timing = LIVE_TIMING,
+  stateDir = null, // when set, the last agent run is also kept in <stateDir>/agent-last.json (survives a world restart)
   log = () => {},
 } = {}) {
   const ids = chargerIds(chargers);
   const proxies = new Map();
   const startedAt = Date.now();
-  const ctx = { core: null, clock: null, lastSuite: null, suiteChain: Promise.resolve() };
+  const ctx = { core: null, clock: null, lastSuite: null, agentLast: null, probing: null, suiteChain: Promise.resolve() };
+  const agentFile = stateDir ? path.join(stateDir, 'agent-last.json') : null;
+  if (agentFile) {
+    try { ctx.agentLast = JSON.parse(fs.readFileSync(agentFile, 'utf8')); } catch (e) { /* none yet */ }
+  }
 
   const links = {
     cut: (id) => proxies.get(id).setCut(true),
@@ -144,7 +152,7 @@ export async function startWorld({
     if (m === 'POST' && path === '/cmd') return send(res, 200, command(await readJson(req)));
     if (m === 'POST' && path === '/hold') {
       const b = await readJson(req);
-      const r = core.placeHold({ charger: b.charger, payment_intent: b.payment_intent, amount_cents: b.amount_cents, currency: b.currency || 'eur' });
+      const r = core.placeHold({ charger: b.charger, payment_intent: b.payment_intent, amount_cents: b.amount_cents, currency: b.currency || 'eur', driver: b.driver ?? null });
       return send(res, r.existing ? 200 : 201, { ok: true, ...r });
     }
     if (m === 'GET' && path === '/intents') {
@@ -200,6 +208,24 @@ export async function startWorld({
       const source = typeof b.source === 'string' ? b.source : core.settle.source;
       const rep = await serial(() => runScenario(b.seed >>> 0, source, { tariffCentsPerKwh, trace: true }));
       return send(res, 200, { ok: true, report: rep });
+    }
+    // The last real agent run, posted by the host when /api/agent/fix ends. It lives here,
+    // in the sandbox, so it survives host cold starts (and /reset).
+    if (m === 'GET' && path === '/agent/last') return send(res, 200, { ok: true, run: ctx.agentLast });
+    if (m === 'POST' && path === '/agent/last') {
+      const b = await readJson(req);
+      const run = { ...b, received_at: Date.now(), received_settle_version: core.settle ? core.settle.version : null };
+      ctx.agentLast = run;
+      if (agentFile) {
+        try { fs.writeFileSync(agentFile, JSON.stringify(run)); } catch (e) { log(`could not write ${agentFile}: ${e.message}`); }
+      }
+      return send(res, 200, { ok: true, received_at: run.received_at });
+    }
+    // The boundary probe (src/probe.js): one run at a time.
+    if (m === 'POST' && path === '/probe') {
+      if (!ctx.probing) ctx.probing = runProbe().finally(() => { ctx.probing = null; });
+      const report = await ctx.probing;
+      return send(res, 200, { ...report, world_uptime_s: Math.round((Date.now() - startedAt) / 1000) });
     }
     if (m === 'POST' && path === '/reset') {
       const b = await readJson(req, true);
@@ -274,9 +300,10 @@ export async function startWorld({
       routes: [
         'GET /health', 'GET /state?events=100', 'GET /events?since=0&limit=500 (or Accept: text/event-stream)',
         'POST /cmd {op: plug|unplug|cut|restore|reboot|quirk|skew, charger, quirk?, on?, power_kw?, seconds?}',
-        'POST /hold {charger, payment_intent, amount_cents}', 'GET /intents?pending=1', 'POST /intents/claim {limit?, lease_ms?}',
+        'POST /hold {charger, payment_intent, amount_cents, driver?}', 'GET /intents?pending=1', 'POST /intents/claim {limit?, lease_ms?}',
         'POST /intents/:id/result {ok, status, error, stripe_object}', 'GET /settle (?raw=1)', 'PUT /settle (body: settle.js source)',
         'POST /settle/validate', 'POST /suite {count?, seed?, seeds?, source?}', 'GET /suite/last', 'POST /suite/trace {seed, source?}', 'POST /reset {settle?: "v1"}',
+        'GET /agent/last', 'POST /agent/last {model, attempts, ...}', 'POST /probe',
       ],
     };
   }
