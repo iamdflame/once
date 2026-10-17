@@ -52876,7 +52876,7 @@ async function startWorld({
       const source = typeof b.source === "string" ? b.source : core.settle.source;
       const version = typeof b.source === "string" ? null : core.settle.version;
       const report = await serial(() => runSuite({ source, count: b.count ?? DEFAULT_SUITE_COUNT, seed: b.seed ?? DEFAULT_SUITE_SEED, seeds: b.seeds, tariffCentsPerKwh }));
-      const out = { settle_version: version, ...report };
+      const out = { settle_version: version, ran_at: Date.now(), ...report };
       if (version != null) ctx.lastSuite = out;
       core.emit({ type: "suite", settle_version: version, summary: report.summary, ok: report.ok, totals: report.totals });
       return send(res, 200, out);
