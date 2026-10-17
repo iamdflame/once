@@ -43,6 +43,11 @@ const vtag = (v: unknown, d = "v1"): string => {
   return /^\d+$/.test(s) ? `v${s}` : s;
 };
 
+/** Drop the test-sandbox preamble Stripe prepends to errors; the rest is Stripe's words, untouched. */
+function stripeMsg(m: string): string {
+  return m.replace(/^This is an unclaimed Stripe sandbox.[^.]*.s*/, "");
+}
+
 async function api<T = unknown>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
   const headers: Record<string, string> = {};
   let body: BodyInit | undefined;
@@ -203,7 +208,7 @@ function normEvent(raw: unknown): WorldEvent | null {
         dir: "in",
         text: ok
           ? `${str(e.kind, "capture")} ${str(e.payment_intent)} ${euro(num(e.amount_cents))} → ${str(e.status)}`
-          : `${str(e.kind, "capture")} ${str(e.payment_intent)} ${euro(num(e.amount_cents))} → refused: ${msg || str(e.status)}`,
+          : `${str(e.kind, "capture")} ${str(e.payment_intent)} ${euro(num(e.amount_cents))} → refused: ${stripeMsg(msg) || str(e.status)}`,
       };
     }
     case "cmd": {
@@ -324,7 +329,7 @@ function buildReceipt(holds: J[], intents: Intent[]): ReceiptLine[] {
         } else {
           const err = r.error;
           const msg = err == null ? str(r.status, "refused") : typeof err === "string" ? err : str(obj(err).message ?? JSON.stringify(err));
-          lines.push({ id: `ref-${pi}-${k}`, t, kind: "refused", charger, amount_cents: amt, payment_intent: pi, stripe_url: stripeUrl(pi), text: `REFUSED: ${msg}` });
+          lines.push({ id: `ref-${pi}-${k}`, t, kind: "refused", charger, amount_cents: amt, payment_intent: pi, stripe_url: stripeUrl(pi), text: `REFUSED: ${stripeMsg(msg)}` });
         }
       });
   }
@@ -619,6 +624,11 @@ export class LiveWorld implements WorldAdapter {
 
   async *runSuite(): AsyncIterable<AgentEvent> {
     for await (const e of this.ndjson("/api/world/suite?stream=1", { count: 30 })) yield e;
+  }
+
+  /** Rearm the demo: clean board, naive v1 settle.js live again. */
+  async reset(): Promise<void> {
+    await api("/api/world/reset", { method: "POST", json: {} });
   }
 
   async *fix(): AsyncIterable<AgentEvent> {

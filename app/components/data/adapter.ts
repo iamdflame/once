@@ -29,8 +29,8 @@ export interface WorldAdapter {
   /** The agent loop: read the report, write settle.js, upload, run, repeat. */
   fix(): AsyncIterable<AgentEvent>;
   proof(): Promise<Proof>;
-  /** Reset the demo (mock only). */
-  reset?(): void;
+  /** Reset the demo: clean board and the naive v1 settle.js. */
+  reset?(): void | Promise<void>;
 }
 
 export function emptyReport(version: string): SuiteReport {

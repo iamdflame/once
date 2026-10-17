@@ -118,6 +118,21 @@ export function Bench() {
     [consume, run, world],
   );
 
+  const resetDemo = useCallback(async () => {
+    if (run || !world.reset) return;
+    setRun("storm");
+    try {
+      await world.reset();
+      setDiff(null);
+      setLines([]);
+      setTiles((tl) => (tl.length ? tl.map(() => null) : tl));
+      setOutcome(null);
+      setStatus("Reset: clean board, the naive v1 settle.js is live again. Run the storm to see it fail.");
+    } finally {
+      setRun(null);
+    }
+  }, [run, world]);
+
   useEffect(() => {
     if (auto.current) return;
     auto.current = true;
@@ -143,6 +158,9 @@ export function Bench() {
           </p>
         </div>
         <div className={s.headActions}>
+          <button type="button" className="btn btn-steel" disabled={run !== null || !world.reset} onClick={() => void resetDemo()} title="Clean board, naive v1 settle.js live again">
+            Reset to v1
+          </button>
           <button type="button" className="btn btn-steel" disabled={run !== null} onClick={() => start("storm")}>
             {run === "storm" ? <Spinner /> : <StormIcon />}
             Run the storm
