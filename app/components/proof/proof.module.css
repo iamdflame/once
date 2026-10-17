@@ -1,0 +1,254 @@
+.head {
+  padding: 44px 0 28px;
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 24px;
+  align-items: end;
+}
+
+.h1 {
+  grid-column: 1 / span 4;
+  font-size: clamp(2.4rem, 4.2vw, 3.6rem);
+  font-weight: 700;
+  letter-spacing: -0.025em;
+}
+
+.lede {
+  grid-column: 6 / span 7;
+  color: var(--ink-soft);
+  max-width: 64ch;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.card {
+  padding: 22px 24px 24px;
+  border-radius: 16px;
+  background: var(--enamel);
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.9),
+    inset 0 0 0 1px oklch(0.3 0.02 60 / 0.08),
+    var(--shadow-raised);
+  min-width: 0;
+}
+
+.captures {
+  grid-column: 1 / -1;
+}
+
+.suite {
+  grid-column: 1 / span 5;
+}
+
+.sandbox {
+  grid-column: 6 / span 7;
+}
+
+.verify {
+  grid-column: 1 / -1;
+}
+
+.cardTitle {
+  margin-bottom: 14px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.empty,
+.err {
+  color: var(--ink-mute);
+}
+
+.err {
+  color: var(--refused-carmine);
+}
+
+.empty a {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  color: var(--ink);
+}
+
+.tableWrap {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 15px;
+}
+
+.table th {
+  text-align: left;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  padding: 0 12px 10px 0;
+  border-bottom: 1px solid oklch(0.3 0.02 60 / 0.14);
+}
+
+.table td {
+  padding: 12px 12px 12px 0;
+  border-bottom: 1px solid oklch(0.3 0.02 60 / 0.08);
+  vertical-align: top;
+}
+
+.table tr[data-status="refused"] td {
+  background: linear-gradient(to right, var(--refused-carmine-soft), transparent 70%);
+}
+
+.num {
+  text-align: right;
+}
+
+.mono {
+  font-family: var(--font-code);
+  font-size: 13px;
+}
+
+.table a.mono {
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
+.status {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 700;
+  background: oklch(0.9 0.01 80);
+}
+
+.status[data-status="succeeded"] {
+  background: oklch(0.92 0.08 145);
+  color: var(--captured-green-ink);
+}
+
+.status[data-status="requires_capture"] {
+  background: oklch(0.94 0.08 72);
+  color: var(--hold-amber-ink);
+}
+
+.status[data-status="refused"] {
+  background: var(--refused-carmine);
+  color: oklch(0.98 0.01 25);
+}
+
+.errText,
+.key {
+  display: block;
+  margin-top: 6px;
+  font-family: var(--font-code);
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  max-width: 60ch;
+}
+
+.errText {
+  color: var(--refused-carmine);
+}
+
+.key {
+  color: var(--ink-mute);
+  overflow-wrap: anywhere;
+}
+
+.suiteMeta {
+  margin-bottom: 12px;
+  font-family: var(--font-code);
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+.dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 12px 24px;
+  font-size: 15.5px;
+}
+
+.dl dt {
+  font-weight: 700;
+  color: var(--ink-soft);
+}
+
+.dl dd small {
+  display: block;
+  margin-top: 3px;
+  font-size: 13.5px;
+  color: var(--ink-mute);
+  max-width: 56ch;
+}
+
+.steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 18px 28px;
+  padding-left: 20px;
+  font-size: 15.5px;
+  line-height: 1.5;
+}
+
+.steps li::marker {
+  font-weight: 700;
+  color: var(--hold-amber-ink);
+}
+
+.steps code {
+  background: oklch(1 0 0 / 0.6);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 0.86em;
+}
+
+@media (max-width: 1000px) {
+  .suite,
+  .sandbox {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 760px) {
+  .head {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    padding: 28px 0 20px;
+  }
+
+  .grid {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  .card {
+    padding: 18px 16px;
+  }
+
+  .dl {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .dl dd {
+    margin-bottom: 10px;
+  }
+
+  .steps {
+    grid-template-columns: 1fr;
+  }
+}
