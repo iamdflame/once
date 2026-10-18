@@ -204,28 +204,20 @@ starting in an
 empty directory.
 
 47
-00:01:46.167 --> 00:01:47.567
-Same charger.
+00:01:46.167 --> 00:01:49.007
+Same charger. Same storm.
 
 48
-00:01:47.607 --> 00:01:49.007
-Same storm.
-
-49
 00:01:49.047 --> 00:01:53.087
 Every driver charged for their
 own energy, exactly once.
 
+49
+00:01:53.127 --> 00:01:57.007
+Once: payment code that
+proves itself before it ships.
+
 50
-00:01:53.127 --> 00:01:54.127
-Once:
-
-51
-00:01:54.167 --> 00:01:57.007
-payment code that proves
-itself before it ships.
-
-52
 00:01:57.047 --> 00:02:01.587
 Try it now at once-seven
 dot vercel dot app.
