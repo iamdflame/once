@@ -2,6 +2,8 @@
 
 **Exactly-once payments for EV chargers.**
 
+**Watch the two-minute demo:** https://once-seven.vercel.app/demo
+
 Once is an agent that writes the hold-meter-capture payment code for public EV chargers, runs that code inside a CreateOS sandbox that holds no keys and refuses HTTP and HTTPS to anything off its allowlist, and proves it against a fleet of simulated OCPP chargers that it can cut, reboot and reconnect at will. Stripe is the witness: when the charger reports the stop twice, Stripe captures once and refuses the duplicate in its own words.
 
 > Cut the cable, pull the plug, bring it back. The charger reported the stop twice. Stripe captured once.

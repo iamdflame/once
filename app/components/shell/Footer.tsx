@@ -10,6 +10,7 @@ const COLUMNS: { title: string; links: { href: string; label: string; external?:
       { href: "/", label: "Board" },
       { href: "/agent", label: "Bench" },
       { href: "/proof", label: "Proof" },
+      { href: "/demo", label: "Demo" },
       { href: "/status", label: "Status" },
     ],
   },
