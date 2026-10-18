@@ -128,6 +128,11 @@ export default function SecurityPage() {
                   <td>One sandbox reused; ten creates per 24 h refused locally; three agent attempts per run</td>
                   <td>demo-grade; per-visitor limits are planned</td>
                 </tr>
+                <tr>
+                  <td>Someone calls the world&apos;s HTTP API directly</td>
+                  <td>The host never publishes the sandbox preview URL; everything is test mode and every capture is capped by its €50 hold</td>
+                  <td>demo-grade: the world API has no host key yet; a shared host-world key is planned</td>
+                </tr>
               </tbody>
             </table>
           </div>

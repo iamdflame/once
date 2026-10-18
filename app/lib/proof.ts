@@ -183,7 +183,6 @@ export async function buildProof(opts: { verify?: boolean } = {}) {
     egress: local ? [] : (w?.sandbox?.egress ?? [...WORLD_SANDBOX.egress]),
     keys_inside: [] as string[],
     state: local ? "running" : (w?.sandbox?.status ?? "absent"),
-    preview: w?.url,
     creates_used: w?.creates_used_24h !== undefined ? `${w.creates_used_24h}/${w.creates_limit_24h} in 24 h` : undefined,
   };
 
@@ -191,7 +190,8 @@ export async function buildProof(opts: { verify?: boolean } = {}) {
     at: new Date().toISOString(),
     captures,
     sandbox,
-    world: cachedWorldInfo() ?? null,
+    // The preview URL stays private: the world API has no host key yet (see /security).
+    world: w ? { ...w, url: undefined } : null,
     world_error: worldError,
     settle,
     attempts: attempts.sort((a, b) => String(b.at ?? "").localeCompare(String(a.at ?? ""))),

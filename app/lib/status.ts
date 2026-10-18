@@ -65,7 +65,7 @@ export async function buildStatus(): Promise<Status> {
     value: reachable
       ? `answering · ${num(health?.online)}/${num(health?.chargers, 12)} chargers online · settle.js deploy #${num(health?.settle_version, 1)}`
       : `unreachable${healthErr ? `: ${healthErr}` : ""}`,
-    detail: local ? "a local world on the host machine (WORLD_URL)" : info?.url ? `GET /health at ${info.url}` : "the CSMS, twelve chargers, the link proxies and settle.js, one process in the sandbox",
+    detail: local ? "a local world on the host machine (WORLD_URL)" : info?.url ? "GET /health on the sandbox preview URL (kept private)" : "the CSMS, twelve chargers, the link proxies and settle.js, one process in the sandbox",
   });
 
   // The sandbox: running or paused, no internet, creates against the plan.
