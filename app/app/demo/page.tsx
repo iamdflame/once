@@ -4,7 +4,7 @@ import s from "../about/about.module.css";
 
 export const metadata: Metadata = {
   title: "Demo — Once",
-  description: "Two minutes: a real Stripe test payment, a cut cable, the wrong driver billed by naive code, and the agent's fix proven in a CreateOS sandbox.",
+  description: "Two minutes: a Stripe test hold, a cut cable, the wrong driver billed by naive code, and the agent's fix proven in a CreateOS sandbox.",
 };
 
 export default function DemoPage() {
@@ -13,7 +13,7 @@ export default function DemoPage() {
       <section className={`wrap ${s.head}`}>
         <h1 className={s.h1}>The two-minute demo</h1>
         <p className={s.lede}>
-          Recorded on the live product in Stripe test mode: a €50 hold, a cut cable, the next driver billed for the previous driver&apos;s energy by naive code, and the agent&apos;s settlement program proven against 30 fault storms inside the CreateOS sandbox before it ships.
+          Once in two minutes: a €50 test hold, a cut cable, the next driver billed for the previous driver&apos;s energy by naive code, and the agent&apos;s settlement program proven against 30 fault storms inside the CreateOS sandbox before it ships.
         </p>
       </section>
       <section className="wrap" style={{ paddingBottom: "4rem" }}>
